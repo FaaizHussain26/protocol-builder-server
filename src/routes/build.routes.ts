@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { validateBody } from '../middleware/validate';
 import { asyncHandler } from '../middleware/asyncHandler';
-import { buildStudy, regenerateForm } from '../controllers/build.controller';
+import { buildStudy, getBuildStatus, regenerateForm } from '../controllers/build.controller';
 
 const buildSchema = z.object({
   protocolText: z.string().min(1, 'protocolText is required'),
@@ -24,4 +24,5 @@ const regenerateSchema = z.object({
 export const buildRouter = Router();
 
 buildRouter.post('/', validateBody(buildSchema), asyncHandler(buildStudy));
+buildRouter.get('/status/:jobId', asyncHandler(getBuildStatus));
 buildRouter.post('/regenerate', validateBody(regenerateSchema), asyncHandler(regenerateForm));

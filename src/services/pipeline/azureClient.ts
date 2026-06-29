@@ -7,6 +7,10 @@ const MAX_OUTPUT_TOKENS = isGpt5Family ? 65536 : 32768;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+// Hard cap on a single Azure call so one hung request can't stall an entire
+// background build indefinitely (a stuck enrichment is recoverable per-form).
+const REQUEST_TIMEOUT_MS = 180_000;
+
 // One chat-completion call that returns the parsed JSON object the model emits.
 // Retries on 429/503 (Azure tokens-per-minute / requests-per-minute throttling),
 // honoring the Retry-After header when present, with exponential backoff.
@@ -27,11 +31,21 @@ export async function callModel(systemPrompt: string, userContent: string): Prom
   const MAX_RETRIES = 5;
   let res!: Response;
   for (let attempt = 0; ; attempt++) {
-    res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'api-key': env.azure.apiKey },
-      body: requestBody,
-    });
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'api-key': env.azure.apiKey },
+        body: requestBody,
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+    } catch (err) {
+      // Network error / timeout: retry with backoff, else surface a clear error.
+      if (attempt >= MAX_RETRIES) {
+        throw new Error(`Azure OpenAI request failed after ${MAX_RETRIES + 1} attempts: ${(err as Error).message}`);
+      }
+      await sleep(Math.min(2000 * 2 ** attempt, 30000));
+      continue;
+    }
     if (res.ok || (res.status !== 429 && res.status !== 503) || attempt >= MAX_RETRIES) break;
     const retryAfter = Number(res.headers.get('retry-after'));
     const waitMs = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : Math.min(2000 * 2 ** attempt, 30000);
