@@ -4,6 +4,7 @@ import { callModel } from './azureClient';
 import { SKELETON_SYSTEM_PROMPT, ENRICH_SYSTEM_PROMPT, enrichDetailLine } from './prompts';
 import { skeletonInput, excerptFor, mapPool, norm, MAX_CONTEXT_CHARS, ENRICH_CONCURRENCY } from './excerpt';
 import { normalizeStudy, normalizeFields, normalizeRules, type RawStudy, type RawForm } from './normalize';
+import { universalRulesFor, universalSkeletonRules } from './universalRules';
 
 // Two-phase build: (A) one big-context call → complete visit/log schedule + form
 // names; (B) parallel per-unique-form enrichment → detailed, sectioned fields.
@@ -22,7 +23,7 @@ export async function buildStudyFromDocuments(
   // ---- Phase A: complete visit/log schedule + form names (one call).
   // memoryContext (similar prior builds) is appended so the model "remembers". ----
   const skeleton = (await callModel(
-    SKELETON_SYSTEM_PROMPT + customLine + memoryContext,
+    SKELETON_SYSTEM_PROMPT + universalSkeletonRules() + customLine + memoryContext,
     `Extract the study structure — the COMPLETE visit/log schedule from the SOA, plus the form names collected at each visit — from the following source document(s):\n\n${skeletonInput(corpus)}`,
   )) as RawStudy;
 
@@ -41,8 +42,9 @@ export async function buildStudyFromDocuments(
     const user =
       `STUDY: ${skeleton.studyTitle ?? ''}${skeleton.indication ? ` — ${skeleton.indication}` : ''}. ${detailLine}\n` +
       `TARGET FORM: "${form.name}"${form.description ? ` — ${form.description}` : ''}.${customLine}\n\n` +
-      `Build the complete, sectioned field list for THIS form only, using the document excerpts below.\n\n` +
-      `===== SOURCE EXCERPTS =====\n${excerptFor(corpus, form.name)}`;
+      `Build the complete, sectioned field list for THIS form only, using the document excerpts below.` +
+      universalRulesFor(form.name) +
+      `\n\n===== SOURCE EXCERPTS =====\n${excerptFor(corpus, form.name)}`;
     try {
       const r = await callModel(ENRICH_SYSTEM_PROMPT, user);
       return { key: norm(form.name), fields: r.fields ?? [], rules: r.rules ?? [] };
@@ -80,8 +82,9 @@ export async function regenerateFormContent(args: {
   const user =
     `STUDY: ${args.studyTitle ?? ''}${args.indication ? ` — ${args.indication}` : ''}. ${detailLine}\n` +
     `TARGET FORM: "${args.formName}"${args.formDescription ? ` — ${args.formDescription}` : ''}.${promptLine}\n\n` +
-    `Build the complete, sectioned field list for THIS form only, using the document excerpts below.\n\n` +
-    `===== SOURCE EXCERPTS =====\n${corpus ? excerptFor(corpus, args.formName) : '(no source text supplied — design from the form name and instructions)'}`;
+    `Build the complete, sectioned field list for THIS form only, using the document excerpts below.` +
+    universalRulesFor(args.formName) +
+    `\n\n===== SOURCE EXCERPTS =====\n${corpus ? excerptFor(corpus, args.formName) : '(no source text supplied — design from the form name and instructions)'}`;
 
   const r = (await callModel(ENRICH_SYSTEM_PROMPT, user)) as RawForm;
   return { fields: normalizeFields(r.fields), rules: normalizeRules(r.rules) };

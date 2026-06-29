@@ -108,6 +108,8 @@ export interface TemplateQuestion {
   group: string;
   options?: string[];
   custom?: boolean;
+  /** Yes/No answer for boolean rule-style questions. Defaults to "yes". */
+  answer?: 'yes' | 'no';
 }
 
 export interface Template {
