@@ -1,0 +1,64 @@
+import { env, azureConfigured } from '../../config/env';
+
+const isGpt5Family = /gpt-5/i.test(env.azure.deployment);
+// max_completion_tokens (gpt-5) / max_tokens (others). Skeleton (no fields) and
+// each single-form enrichment both stay well under these caps.
+const MAX_OUTPUT_TOKENS = isGpt5Family ? 65536 : 32768;
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+// One chat-completion call that returns the parsed JSON object the model emits.
+// Retries on 429/503 (Azure tokens-per-minute / requests-per-minute throttling),
+// honoring the Retry-After header when present, with exponential backoff.
+export async function callModel(systemPrompt: string, userContent: string): Promise<any> {
+  if (!azureConfigured) throw new Error('Azure OpenAI is not configured on the server.');
+  const url = `${env.azure.endpoint}/openai/deployments/${env.azure.deployment}/chat/completions?api-version=${env.azure.apiVersion}`;
+  const requestBody = JSON.stringify({
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userContent },
+    ],
+    ...(isGpt5Family
+      ? { max_completion_tokens: MAX_OUTPUT_TOKENS, reasoning_effort: 'low' }
+      : { max_tokens: MAX_OUTPUT_TOKENS, temperature: 0.3 }),
+    response_format: { type: 'json_object' },
+  });
+
+  const MAX_RETRIES = 5;
+  let res!: Response;
+  for (let attempt = 0; ; attempt++) {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'api-key': env.azure.apiKey },
+      body: requestBody,
+    });
+    if (res.ok || (res.status !== 429 && res.status !== 503) || attempt >= MAX_RETRIES) break;
+    const retryAfter = Number(res.headers.get('retry-after'));
+    const waitMs = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : Math.min(2000 * 2 ** attempt, 30000);
+    await sleep(waitMs);
+  }
+
+  if (!res.ok) {
+    const errBody = await res.text();
+    const hint = res.status === 429
+      ? ' — the deployment is throttling (tokens/requests-per-minute quota). Try again shortly or raise the deployment quota in Azure.'
+      : '';
+    throw new Error(`Azure OpenAI API error ${res.status}: ${errBody}${hint}`);
+  }
+
+  const data = (await res.json()) as {
+    choices: Array<{ message: { content: string | null }; finish_reason: string }>;
+  };
+  const choice = data.choices[0];
+  let jsonText = choice?.message?.content?.trim() ?? '';
+  jsonText = jsonText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+
+  if (!jsonText) throw new Error(`Model returned no content (finish_reason: ${choice?.finish_reason ?? 'unknown'}).`);
+  if (choice?.finish_reason === 'length') throw new Error('Model response was truncated (finish_reason: length) before the JSON was complete.');
+
+  try {
+    return JSON.parse(jsonText);
+  } catch {
+    throw new Error('Model returned invalid/incomplete JSON (likely truncated).');
+  }
+}
