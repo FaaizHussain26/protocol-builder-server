@@ -41,6 +41,21 @@ export interface StudyField {
   page?: number;
   originalText?: string;
   reviewStatus: ReviewStatus;
+  /** True once the user hand-edited this field after generation. */
+  editedByUser?: boolean;
+  /** Snapshot of the AI-generated version taken on the FIRST user edit —
+   *  the (original, edited) pair feeds the preference-learning memory. */
+  aiOriginal?: FieldSnapshot;
+}
+
+/** The learnable aspects of a field, captured before the user's first edit. */
+export interface FieldSnapshot {
+  label: string;
+  type: FieldType;
+  required: boolean;
+  options?: string[];
+  completionGuidance?: string;
+  section?: string;
 }
 
 export interface ValidationRule {
@@ -110,6 +125,43 @@ export interface TemplateQuestion {
   custom?: boolean;
   /** Yes/No answer for boolean rule-style questions. Defaults to "yes". */
   answer?: 'yes' | 'no';
+  /** AI confidence when the question was detected from an uploaded eSource. */
+  confidence?: Confidence;
+}
+
+// ---- eSource → template analysis (upload an existing eSource, detect prefs) ----
+
+/** A field the AI would generate, previewed from an uploaded eSource. */
+export interface DetectedField {
+  label: string;
+  type: FieldType;
+  required: boolean;
+  options?: string[];
+  section?: string;
+  confidence: Confidence;
+}
+
+export interface DetectedForm {
+  name: string;
+  fields: DetectedField[];
+}
+
+/** Result of analyzing an uploaded eSource document for template creation. */
+export interface EsourceAnalysis {
+  /** Suggested template name (from the study/document). */
+  templateName: string;
+  summary: string;
+  /** Core preference toggles detected from the document (null/undefined = not determinable). */
+  preferences: Partial<Pick<TemplatePreferences,
+    'dateFormat' | 'timeFormat' | 'requireSignature' | 'documentUploadFields' | 'generalSections' | 'screeningOrder'>>;
+  /** Detected preference/rule statements, each with AI confidence. */
+  questions: TemplateQuestion[];
+  /** Universal rules the eSource contradicts (should be answered "no"). */
+  ruleOverrides: { id: string; text: string; answer: 'yes' | 'no'; confidence: Confidence }[];
+  /** The forms/fields the AI will generate when this template is used. */
+  forms: DetectedForm[];
+  /** Free-text style directives distilled from the eSource. */
+  instructions?: string;
 }
 
 export interface Template {

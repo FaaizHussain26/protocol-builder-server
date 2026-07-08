@@ -2,6 +2,7 @@ import { StudyDoc } from '../models/Study.model';
 import { isMongoConnected, dbUnavailableMessage } from '../config/db';
 import { HttpError } from '../middleware/errorHandler';
 import { embed, studyEmbeddingText, EMBED_MODEL } from './embeddings.service';
+import { recordFieldEdits } from './editMemory.service';
 import type { StudyModel } from '../types/study';
 
 function ensureDb(): void {
@@ -74,6 +75,8 @@ export async function createStudy(study: Partial<StudyModel> & Record<string, un
   ensureDb();
   const base = studyPayload(study);
   const doc = await StudyDoc.create(await withEmbedding({ ...base, ...countVisitsFields(base.visits as any[]) }));
+  // Learn from user-edited fields (fire-and-forget; failures only log).
+  void recordFieldEdits(base as Partial<StudyModel>, String(doc._id));
   return doc.toJSON() as unknown as StudyModel;
 }
 
@@ -82,6 +85,7 @@ export async function updateStudy(id: string, study: Partial<StudyModel> & Recor
   const base = studyPayload(study);
   const doc = await StudyDoc.findByIdAndUpdate(id, await withEmbedding({ ...base, ...countVisitsFields(base.visits as any[]) }), { new: true, overwrite: true });
   if (!doc) throw new HttpError(404, 'Study not found.');
+  void recordFieldEdits(base as Partial<StudyModel>, id);
   return doc.toJSON() as unknown as StudyModel;
 }
 

@@ -3,6 +3,7 @@ import { buildStudyFromDocuments, regenerateFormContent } from '../services/pipe
 import { applyTemplate } from '../services/pipeline/templateApply';
 import { applyScreeningOrder, addGeneralSections } from '../services/pipeline/generalSections';
 import { retrieveSimilar, buildMemoryContext } from '../services/memory.service';
+import { loadLearnedPreferences } from '../services/editMemory.service';
 import { buildQuestionsContext } from '../services/pipeline/questionsContext';
 import { createJob, getJob, completeJob, failJob } from '../services/buildJobs';
 import { HttpError } from '../middleware/errorHandler';
@@ -33,11 +34,15 @@ async function runBuild(jobId: string, body: BuildRequestBody): Promise<void> {
       opts.customInstructions = [opts.customInstructions, extra].filter(Boolean).join('\n');
     }
 
-    // Phase 3: retrieve similar prior builds (best-effort; [] without Mongo/index).
-    const memory = await retrieveSimilar(String(protocolText).slice(0, 4000), 3);
+    // Phase 3: retrieve similar prior builds + learned field corrections
+    // (both best-effort; empty without Mongo/index).
+    const [memory, learned] = await Promise.all([
+      retrieveSimilar(String(protocolText).slice(0, 4000), 3),
+      loadLearnedPreferences(),
+    ]);
     const memoryContext = buildMemoryContext(memory);
 
-    let study = await buildStudyFromDocuments(protocolText, documents ?? [], opts, memoryContext);
+    let study = await buildStudyFromDocuments(protocolText, documents ?? [], opts, memoryContext, learned);
 
     // Phase 2: apply template preferences (date/time formats, signature, alerts),
     // then optional Screening ordering and General Sections.
@@ -79,6 +84,7 @@ export async function regenerateForm(req: Request, res: Response): Promise<void>
     protocolText: protocolText ?? '',
     prompt,
     options,
+    learned: await loadLearnedPreferences(),
   });
   res.json(result);
 }

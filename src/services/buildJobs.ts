@@ -17,6 +17,8 @@ export interface BuildJob {
   id: string;
   status: JobStatus;
   study?: StudyModel;
+  /** Generic payload for non-build jobs (e.g. eSource template analysis). */
+  result?: unknown;
   memoryUsed?: number;
   error?: string;
   createdAt: number;
@@ -53,6 +55,14 @@ export function completeJob(id: string, study: StudyModel, memoryUsed: number): 
   job.status = 'done';
   job.study = study;
   job.memoryUsed = memoryUsed;
+  job.updatedAt = Date.now();
+}
+
+export function completeJobResult(id: string, result: unknown): void {
+  const job = jobs.get(id);
+  if (!job) return;
+  job.status = 'done';
+  job.result = result;
   job.updatedAt = Date.now();
 }
 

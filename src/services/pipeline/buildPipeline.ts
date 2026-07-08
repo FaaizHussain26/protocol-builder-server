@@ -5,6 +5,7 @@ import { SKELETON_SYSTEM_PROMPT, ENRICH_SYSTEM_PROMPT, enrichDetailLine } from '
 import { skeletonInput, excerptFor, mapPool, norm, MAX_CONTEXT_CHARS, ENRICH_CONCURRENCY } from './excerpt';
 import { normalizeStudy, normalizeFields, normalizeRules, type RawStudy, type RawForm } from './normalize';
 import { universalRulesFor, universalSkeletonRules } from './universalRules';
+import { learnedPrefsContext } from '../editMemory.service';
 
 // Two-phase build: (A) one big-context call → complete visit/log schedule + form
 // names; (B) parallel per-unique-form enrichment → detailed, sectioned fields.
@@ -13,6 +14,7 @@ export async function buildStudyFromDocuments(
   documents: IngestedDocument[],
   options: BuildOptions = {},
   memoryContext = '',
+  learned: Map<string, string[]> = new Map(),
 ): Promise<StudyModel> {
   const o = { ...DEFAULT_OPTIONS, ...options };
   const corpus = protocolText.length > MAX_CONTEXT_CHARS ? protocolText.slice(0, MAX_CONTEXT_CHARS) : protocolText;
@@ -44,6 +46,7 @@ export async function buildStudyFromDocuments(
       `TARGET FORM: "${form.name}"${form.description ? ` — ${form.description}` : ''}.${customLine}\n\n` +
       `Build the complete, sectioned field list for THIS form only, using the document excerpts below.` +
       universalRulesFor(form.name) +
+      learnedPrefsContext(learned, form.name) +
       `\n\n===== SOURCE EXCERPTS =====\n${excerptFor(corpus, form.name)}`;
     try {
       const r = await callModel(ENRICH_SYSTEM_PROMPT, user);
@@ -74,6 +77,7 @@ export async function regenerateFormContent(args: {
   protocolText: string;
   prompt?: string;
   options?: BuildOptions;
+  learned?: Map<string, string[]>;
 }): Promise<{ fields: ReturnType<typeof normalizeFields>; rules: ReturnType<typeof normalizeRules> }> {
   const o = { ...DEFAULT_OPTIONS, ...(args.options ?? {}) };
   const corpus = (args.protocolText || '').slice(0, MAX_CONTEXT_CHARS);
@@ -84,6 +88,7 @@ export async function regenerateFormContent(args: {
     `TARGET FORM: "${args.formName}"${args.formDescription ? ` — ${args.formDescription}` : ''}.${promptLine}\n\n` +
     `Build the complete, sectioned field list for THIS form only, using the document excerpts below.` +
     universalRulesFor(args.formName) +
+    learnedPrefsContext(args.learned ?? new Map(), args.formName) +
     `\n\n===== SOURCE EXCERPTS =====\n${corpus ? excerptFor(corpus, args.formName) : '(no source text supplied — design from the form name and instructions)'}`;
 
   const r = (await callModel(ENRICH_SYSTEM_PROMPT, user)) as RawForm;
