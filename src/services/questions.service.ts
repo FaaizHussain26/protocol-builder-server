@@ -20,10 +20,23 @@ export async function createQuestion(input: Partial<TemplateQuestion>): Promise<
   const doc = await QuestionDoc.create({
     text: input.text,
     answerType: input.answerType ?? 'text',
-    group: 'Custom',
+    group: input.group ?? 'Custom',
     options: input.options,
   });
   return { ...(doc.toJSON() as unknown as TemplateQuestion), custom: true };
+}
+
+// Bulk insert — used when an eSource import approves hundreds of detected
+// questions at once, so they land in the library as reusable custom questions.
+export async function createQuestionsBulk(items: Partial<TemplateQuestion>[]): Promise<TemplateQuestion[]> {
+  ensureDb();
+  const docs = await QuestionDoc.insertMany(items.map((i) => ({
+    text: i.text,
+    answerType: i.answerType ?? 'text',
+    group: i.group ?? 'Custom',
+    options: i.options,
+  })));
+  return docs.map((d) => ({ ...(d.toJSON() as unknown as TemplateQuestion), custom: true }));
 }
 
 export async function deleteQuestion(id: string): Promise<void> {

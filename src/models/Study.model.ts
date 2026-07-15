@@ -20,6 +20,7 @@ const StudySchema = new Schema(
     // visits tree (a study can carry 1500+ fields).
     visitCount: { type: Number, default: 0 },
     fieldCount: { type: Number, default: 0 },
+    approvedFieldCount: { type: Number, default: 0 },
     buildOptions: { type: Schema.Types.Mixed },
     templateId: String,
     dateFormatPreference: String,

@@ -20,12 +20,18 @@ interface StudySummary {
   updatedAt: string;
   visitCount: number;
   fieldCount: number;
+  approvedFieldCount: number;
 }
 
-function countVisitsFields(visits: any[]): { visitCount: number; fieldCount: number } {
-  let fieldCount = 0;
-  for (const v of visits ?? []) for (const f of v.forms ?? []) fieldCount += (f.fields ?? []).length;
-  return { visitCount: (visits ?? []).length, fieldCount };
+function countVisitsFields(visits: any[]): { visitCount: number; fieldCount: number; approvedFieldCount: number } {
+  let fieldCount = 0, approvedFieldCount = 0;
+  for (const v of visits ?? []) {
+    for (const f of v.forms ?? []) {
+      fieldCount += (f.fields ?? []).length;
+      approvedFieldCount += (f.fields ?? []).filter((x: any) => x?.reviewStatus === 'accepted').length;
+    }
+  }
+  return { visitCount: (visits ?? []).length, fieldCount, approvedFieldCount };
 }
 
 // Strip persistence-only keys so we save just the domain study payload.
@@ -49,7 +55,7 @@ async function withEmbedding(payload: Record<string, unknown>): Promise<Record<s
 export async function listStudies(): Promise<StudySummary[]> {
   ensureDb();
   // Project summary fields only — never the (potentially huge) visits tree.
-  const docs = await StudyDoc.find({}, { studyTitle: 1, protocolNumber: 1, phase: 1, status: 1, visitCount: 1, fieldCount: 1, updatedAt: 1 })
+  const docs = await StudyDoc.find({}, { studyTitle: 1, protocolNumber: 1, phase: 1, status: 1, visitCount: 1, fieldCount: 1, approvedFieldCount: 1, updatedAt: 1 })
     .sort({ updatedAt: -1 })
     .lean();
   return docs.map((d: any) => ({
@@ -61,6 +67,7 @@ export async function listStudies(): Promise<StudySummary[]> {
     updatedAt: (d.updatedAt instanceof Date ? d.updatedAt : new Date(d.updatedAt)).toISOString(),
     visitCount: d.visitCount ?? 0,
     fieldCount: d.fieldCount ?? 0,
+    approvedFieldCount: d.approvedFieldCount ?? 0,
   }));
 }
 

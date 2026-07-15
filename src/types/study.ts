@@ -221,6 +221,8 @@ export interface IngestedDocument {
 export interface StudyModel {
   /** Persistence id (Mongo _id) once saved. */
   id?: string;
+  /** Review lifecycle: "draft" until every field is approved, then "final". */
+  status?: 'draft' | 'reviewed' | 'final';
   studyTitle: string;
   studyDescription: string;
   protocolNumber?: string;
