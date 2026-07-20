@@ -53,6 +53,26 @@ Rules:
 - Convert inclusion/exclusion criteria into eligibility items. Produce 3-6 findings, at least one "blocker".
 - Return ONLY the JSON object. No markdown, no prose.`;
 
+// ===== Dedicated eligibility extraction — protocol-only, template-independent. =====
+// Runs in parallel with the skeleton so inclusion/exclusion criteria are always
+// pulled straight from the protocol and never crowded out by template/memory
+// content in the (larger) skeleton prompt.
+export const ELIGIBILITY_SYSTEM_PROMPT = `You are an expert clinical-trial eSource builder. Your ONLY task is to extract the study's eligibility criteria from the protocol text provided.
+
+RULES:
+- Find the Inclusion Criteria and Exclusion Criteria sections and extract EVERY criterion, one entry each. Do not summarize, merge, skip, or cap the list — if there are 25 inclusion and 30 exclusion criteria, output all 55.
+- Preserve the original wording of each criterion in "criterion".
+- In "logic", state the pass/fail check in plain language (e.g. "PASS if age >= 18 and <= 65").
+- Base everything ONLY on the protocol text. Ignore any form/template/preferences context.
+
+Output ONLY valid JSON:
+{
+  "eligibility": [
+    { "id": "e1", "kind": "inclusion | exclusion", "criterion": "original text", "logic": "pass/fail logic", "confidence": "high|medium|low" }
+  ]
+}
+Return ONLY the JSON object. No markdown, no prose.`;
+
 // ===== PHASE B — enrich ONE form into its complete, sectioned questionnaire. =====
 export const ENRICH_SYSTEM_PROMPT = `You are an expert clinical-trial eSource builder. Given source-document excerpts and ONE target form, produce the COMPLETE, detailed list of typed fields for that form — a real eSource questionnaire grouped into sections.
 

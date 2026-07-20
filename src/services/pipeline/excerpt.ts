@@ -76,6 +76,42 @@ export function skeletonInput(corpus: string): string {
   return out.slice(0, SKELETON_MAX_CHARS);
 }
 
+// Eligibility-focused input cap (~15k tokens) for the dedicated eligibility pass.
+export const ELIGIBILITY_MAX_CHARS = 60000;
+
+// Assemble a focused input around the Inclusion/Exclusion criteria for the
+// dedicated eligibility extraction. Windows the criteria regions (they can be
+// long lists) and falls back to the document start when no anchor is found.
+export function eligibilityInput(corpus: string): string {
+  const doc = soaDocsOnly(corpus);
+  if (doc.length <= ELIGIBILITY_MAX_CHARS) return doc;
+
+  const anchors = [/inclusion\s+criteria/i, /exclusion\s+criteria/i, /\beligibility\b/i];
+  const windows: Array<[number, number]> = [];
+  for (const re of anchors) {
+    const g = new RegExp(re.source, 'gi');
+    let m: RegExpExecArray | null;
+    while ((m = g.exec(doc)) && windows.length < 8) {
+      windows.push([Math.max(0, m.index - 500), Math.min(doc.length, m.index + 22000)]);
+    }
+  }
+  if (!windows.length) return doc.slice(0, ELIGIBILITY_MAX_CHARS);
+
+  windows.sort((a, b) => a[0] - b[0]);
+  const merged: Array<[number, number]> = [];
+  for (const w of windows) {
+    const last = merged[merged.length - 1];
+    if (last && w[0] <= last[1]) last[1] = Math.max(last[1], w[1]);
+    else merged.push([w[0], w[1]]);
+  }
+  let out = '';
+  for (const [s, e] of merged) {
+    out += doc.slice(s, e) + '\n…\n';
+    if (out.length >= ELIGIBILITY_MAX_CHARS) break;
+  }
+  return out.slice(0, ELIGIBILITY_MAX_CHARS);
+}
+
 // Build a focused excerpt of the corpus around mentions of a form name, so each
 // enrichment call sends only the relevant slice rather than the whole document.
 export function excerptFor(corpus: string, formName: string, maxChars = ENRICH_EXCERPT_CHARS): string {

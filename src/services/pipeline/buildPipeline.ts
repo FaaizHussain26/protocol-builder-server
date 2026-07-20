@@ -1,11 +1,25 @@
 import type { StudyModel, BuildOptions, IngestedDocument } from '../../types/study';
 import { DEFAULT_OPTIONS } from '../../types/study';
 import { callModel } from './azureClient';
-import { SKELETON_SYSTEM_PROMPT, ENRICH_SYSTEM_PROMPT, enrichDetailLine } from './prompts';
-import { skeletonInput, excerptFor, mapPool, norm, MAX_CONTEXT_CHARS, ENRICH_CONCURRENCY } from './excerpt';
+import { SKELETON_SYSTEM_PROMPT, ENRICH_SYSTEM_PROMPT, ELIGIBILITY_SYSTEM_PROMPT, enrichDetailLine } from './prompts';
+import { skeletonInput, eligibilityInput, excerptFor, mapPool, norm, MAX_CONTEXT_CHARS, ENRICH_CONCURRENCY } from './excerpt';
 import { normalizeStudy, normalizeFields, normalizeRules, type RawStudy, type RawForm } from './normalize';
 import { universalRulesFor, universalSkeletonRules } from './universalRules';
 import { learnedPrefsContext } from '../editMemory.service';
+
+// Dedicated, protocol-only eligibility extraction. Best-effort: returns [] on
+// failure so a hiccup here never blocks the build.
+async function extractEligibility(corpus: string): Promise<RawStudy['eligibility']> {
+  try {
+    const r = (await callModel(
+      ELIGIBILITY_SYSTEM_PROMPT,
+      `Extract EVERY inclusion and exclusion criterion from the protocol below.\n\n${eligibilityInput(corpus)}`,
+    )) as { eligibility?: RawStudy['eligibility'] };
+    return r.eligibility ?? [];
+  } catch {
+    return [];
+  }
+}
 
 // Two-phase build: (A) one big-context call → complete visit/log schedule + form
 // names; (B) parallel per-unique-form enrichment → detailed, sectioned fields.
@@ -23,11 +37,23 @@ export async function buildStudyFromDocuments(
     : '';
 
   // ---- Phase A: complete visit/log schedule + form names (one call).
-  // memoryContext (similar prior builds) is appended so the model "remembers". ----
-  const skeleton = (await callModel(
-    SKELETON_SYSTEM_PROMPT + universalSkeletonRules() + customLine + memoryContext,
-    `Extract the study structure — the COMPLETE visit/log schedule from the SOA, plus the form names collected at each visit — from the following source document(s):\n\n${skeletonInput(corpus)}`,
-  )) as RawStudy;
+  // memoryContext (similar prior builds) is appended so the model "remembers".
+  // In PARALLEL: a dedicated eligibility pass reads ONLY the protocol (no
+  // template/memory), so inclusion/exclusion criteria are always extracted
+  // straight from the protocol and never crowded out by the skeleton prompt. ----
+  const [skeleton, eligibility] = await Promise.all([
+    callModel(
+      SKELETON_SYSTEM_PROMPT + universalSkeletonRules() + customLine + memoryContext,
+      `Extract the study structure — the COMPLETE visit/log schedule from the SOA, plus the form names collected at each visit — from the following source document(s):\n\n${skeletonInput(corpus)}`,
+    ) as Promise<RawStudy>,
+    extractEligibility(corpus),
+  ]);
+
+  // The protocol is authoritative for eligibility: prefer the dedicated pass
+  // whenever it found at least as many criteria as the skeleton did.
+  if ((eligibility?.length ?? 0) >= (skeleton.eligibility?.length ?? 0)) {
+    skeleton.eligibility = eligibility;
+  }
 
   const visits = skeleton.visits ?? [];
 

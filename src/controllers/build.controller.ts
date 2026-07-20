@@ -5,7 +5,7 @@ import { applyScreeningOrder, addGeneralSections } from '../services/pipeline/ge
 import { retrieveSimilar, buildMemoryContext } from '../services/memory.service';
 import { loadLearnedPreferences } from '../services/editMemory.service';
 import { buildQuestionsContext } from '../services/pipeline/questionsContext';
-import { createJob, getJob, completeJob, failJob } from '../services/buildJobs';
+import { createJob, getJob, completeJob, completeJobResult, failJob } from '../services/buildJobs';
 import { HttpError } from '../middleware/errorHandler';
 import type { TemplatePreferences, IngestedDocument } from '../types/study';
 
@@ -67,24 +67,35 @@ export async function buildStudy(req: Request, res: Response): Promise<void> {
   res.status(202).json({ jobId: job.id });
 }
 
-// Poll the status/result of a build job.
+// Poll the status/result of a build or regenerate job.
 export async function getBuildStatus(req: Request, res: Response): Promise<void> {
   const job = getJob(String(req.params.jobId));
-  if (!job) throw new HttpError(404, 'Build job not found (it may have expired). Start a new build.');
-  res.json({ status: job.status, study: job.study, memoryUsed: job.memoryUsed, error: job.error });
+  if (!job) throw new HttpError(404, 'Job not found (it may have expired). Please try again.');
+  res.json({ status: job.status, study: job.study, result: job.result, memoryUsed: job.memoryUsed, error: job.error });
+}
+
+// Regenerating a form makes a full enrichment call, which can outlast a hosting
+// proxy's request timeout — so it runs as a background job like the build.
+async function runRegenerate(jobId: string, body: Record<string, unknown>): Promise<void> {
+  try {
+    const result = await regenerateFormContent({
+      formName: String(body.formName ?? ''),
+      formDescription: body.formDescription as string | undefined,
+      studyTitle: body.studyTitle as string | undefined,
+      indication: body.indication as string | undefined,
+      protocolText: (body.protocolText as string | undefined) ?? '',
+      prompt: body.prompt as string | undefined,
+      options: body.options as never,
+      learned: await loadLearnedPreferences(),
+    });
+    completeJobResult(jobId, result);
+  } catch (err) {
+    failJob(jobId, err instanceof Error ? err.message : 'Regenerate failed.');
+  }
 }
 
 export async function regenerateForm(req: Request, res: Response): Promise<void> {
-  const { formName, formDescription, studyTitle, indication, protocolText, prompt, options } = req.body;
-  const result = await regenerateFormContent({
-    formName,
-    formDescription,
-    studyTitle,
-    indication,
-    protocolText: protocolText ?? '',
-    prompt,
-    options,
-    learned: await loadLearnedPreferences(),
-  });
-  res.json(result);
+  const job = createJob();
+  void runRegenerate(job.id, req.body as Record<string, unknown>);
+  res.status(202).json({ jobId: job.id });
 }
