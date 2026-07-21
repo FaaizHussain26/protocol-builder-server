@@ -24,6 +24,8 @@ const StudySchema = new Schema(
     buildOptions: { type: Schema.Types.Mixed },
     templateId: String,
     dateFormatPreference: String,
+    // Soft-delete: null/absent = active; a Date = in Trash (recoverable).
+    deletedAt: { type: Date, default: null },
     // Vector-ready (Phase 3, unused for now).
     embedding: { type: [Number], default: undefined },
     embeddingModel: String,

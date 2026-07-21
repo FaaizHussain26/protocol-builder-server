@@ -23,3 +23,17 @@ export async function remove(req: Request, res: Response): Promise<void> {
   await studies.deleteStudy(String(req.params.id));
   res.json({ ok: true });
 }
+
+export async function listTrashed(_req: Request, res: Response): Promise<void> {
+  res.json({ items: await studies.listTrash() });
+}
+
+export async function restore(req: Request, res: Response): Promise<void> {
+  await studies.restoreStudy(String(req.params.id));
+  res.json({ ok: true });
+}
+
+export async function purge(req: Request, res: Response): Promise<void> {
+  await studies.permanentlyDeleteStudy(String(req.params.id));
+  res.json({ ok: true });
+}

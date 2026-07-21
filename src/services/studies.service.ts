@@ -21,6 +21,7 @@ interface StudySummary {
   visitCount: number;
   fieldCount: number;
   approvedFieldCount: number;
+  deletedAt?: string;
 }
 
 function countVisitsFields(visits: any[]): { visitCount: number; fieldCount: number; approvedFieldCount: number } {
@@ -55,10 +56,24 @@ async function withEmbedding(payload: Record<string, unknown>): Promise<Record<s
 export async function listStudies(): Promise<StudySummary[]> {
   ensureDb();
   // Project summary fields only — never the (potentially huge) visits tree.
-  const docs = await StudyDoc.find({}, { studyTitle: 1, protocolNumber: 1, phase: 1, status: 1, visitCount: 1, fieldCount: 1, approvedFieldCount: 1, updatedAt: 1 })
+  // Active studies only ({deletedAt: null} also matches docs with no such field).
+  const docs = await StudyDoc.find({ deletedAt: null }, { studyTitle: 1, protocolNumber: 1, phase: 1, status: 1, visitCount: 1, fieldCount: 1, approvedFieldCount: 1, updatedAt: 1 })
     .sort({ updatedAt: -1 })
     .lean();
-  return docs.map((d: any) => ({
+  return docs.map(toSummary);
+}
+
+// Trashed (soft-deleted) studies, most-recently-deleted first.
+export async function listTrash(): Promise<StudySummary[]> {
+  ensureDb();
+  const docs = await StudyDoc.find({ deletedAt: { $ne: null } }, { studyTitle: 1, protocolNumber: 1, phase: 1, status: 1, visitCount: 1, fieldCount: 1, approvedFieldCount: 1, updatedAt: 1, deletedAt: 1 })
+    .sort({ deletedAt: -1 })
+    .lean();
+  return docs.map(toSummary);
+}
+
+function toSummary(d: any): StudySummary {
+  return {
     id: String(d._id),
     studyTitle: d.studyTitle,
     protocolNumber: d.protocolNumber,
@@ -68,7 +83,8 @@ export async function listStudies(): Promise<StudySummary[]> {
     visitCount: d.visitCount ?? 0,
     fieldCount: d.fieldCount ?? 0,
     approvedFieldCount: d.approvedFieldCount ?? 0,
-  }));
+    deletedAt: d.deletedAt ? (d.deletedAt instanceof Date ? d.deletedAt : new Date(d.deletedAt)).toISOString() : undefined,
+  };
 }
 
 export async function getStudy(id: string): Promise<StudyModel> {
@@ -96,7 +112,23 @@ export async function updateStudy(id: string, study: Partial<StudyModel> & Recor
   return doc.toJSON() as unknown as StudyModel;
 }
 
+// Soft delete: move the study to Trash (recoverable). The list endpoint hides
+// trashed studies; permanentlyDeleteStudy removes them for good.
 export async function deleteStudy(id: string): Promise<void> {
+  ensureDb();
+  const doc = await StudyDoc.findByIdAndUpdate(id, { deletedAt: new Date() });
+  if (!doc) throw new HttpError(404, 'Study not found.');
+}
+
+// Restore a trashed study back to the active list.
+export async function restoreStudy(id: string): Promise<void> {
+  ensureDb();
+  const doc = await StudyDoc.findByIdAndUpdate(id, { deletedAt: null });
+  if (!doc) throw new HttpError(404, 'Study not found.');
+}
+
+// Permanently remove a study (used from Trash).
+export async function permanentlyDeleteStudy(id: string): Promise<void> {
   ensureDb();
   const doc = await StudyDoc.findByIdAndDelete(id);
   if (!doc) throw new HttpError(404, 'Study not found.');
