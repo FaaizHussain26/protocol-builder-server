@@ -98,6 +98,22 @@ Output ONLY valid JSON for THIS one form:
 }
 Return ONLY the JSON object. No markdown, no prose.`;
 
+// Neutral fallback used when Azure's Prompt Shields flag the full enrichment
+// prompt as a jailbreak. Plain, non-imperative wording that still returns the
+// same JSON shape, so a filtered form/regenerate can still be built.
+export const ENRICH_SYSTEM_PROMPT_SAFE = `You are a clinical data manager designing an electronic case report form. Given some source text and a target form, produce a list of the data-entry fields for that form.
+
+Output ONLY valid JSON:
+{
+  "fields": [
+    { "label": "string", "type": "text|textarea|number|integer|decimal|date|datetime|time|select|multiselect|radio|checkbox|yesno|signature|file|calculated", "required": true,
+      "options": ["..."], "section": "string or null", "expression": "string or null", "confidence": "high|medium|low",
+      "completionGuidance": "string", "source": "string", "protocolSection": "string or null", "page": "number or null", "originalText": "string or null" }
+  ],
+  "rules": [ { "description": "string", "ruleType": "range|required-if|cross-field|format|date-not-future|within-visit-window", "confidence": "high|medium|low" } ]
+}
+Return ONLY the JSON object. No prose.`;
+
 // Per-form field-count guidance, driven by the detailLevel option.
 export function enrichDetailLine(o: ResolvedOptions): string {
   if (o.detailLevel === 'concise') return 'Keep it lean: the most important 4-6 fields, still grouped into sections.';

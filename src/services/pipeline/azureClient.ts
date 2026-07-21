@@ -54,6 +54,11 @@ export async function callModel(systemPrompt: string, userContent: string): Prom
 
   if (!res.ok) {
     const errBody = await res.text();
+    // Azure content management / Prompt Shields (jailbreak, hate, …) → 400 with
+    // code "content_filter". Flag it so callers can retry with a neutral prompt.
+    if (res.status === 400 && /content_filter|ResponsibleAIPolicy|content management policy/i.test(errBody)) {
+      throw Object.assign(new Error('Azure content filter blocked the prompt (content_filter).'), { contentFilter: true });
+    }
     const hint = res.status === 429
       ? ' — the deployment is throttling (tokens/requests-per-minute quota). Try again shortly or raise the deployment quota in Azure.'
       : '';

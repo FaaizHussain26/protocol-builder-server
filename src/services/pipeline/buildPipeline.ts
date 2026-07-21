@@ -1,11 +1,25 @@
 import type { StudyModel, BuildOptions, IngestedDocument } from '../../types/study';
 import { DEFAULT_OPTIONS } from '../../types/study';
 import { callModel } from './azureClient';
-import { SKELETON_SYSTEM_PROMPT, ENRICH_SYSTEM_PROMPT, ELIGIBILITY_SYSTEM_PROMPT, enrichDetailLine } from './prompts';
+import { SKELETON_SYSTEM_PROMPT, ENRICH_SYSTEM_PROMPT, ENRICH_SYSTEM_PROMPT_SAFE, ELIGIBILITY_SYSTEM_PROMPT, enrichDetailLine } from './prompts';
 import { skeletonInput, eligibilityInput, excerptFor, mapPool, norm, MAX_CONTEXT_CHARS, ENRICH_CONCURRENCY } from './excerpt';
 import { normalizeStudy, normalizeFields, normalizeRules, type RawStudy, type RawForm } from './normalize';
 import { universalRulesFor, universalSkeletonRules } from './universalRules';
 import { learnedPrefsContext } from '../editMemory.service';
+
+// Enrich one form. If Azure's content filter flags the rich, instruction-heavy
+// prompt as a jailbreak, retry once with a neutral prompt (form context +
+// excerpt only) that returns the same JSON shape.
+async function callEnrich(fullUser: string, safeUser: string): Promise<RawForm> {
+  try {
+    return (await callModel(ENRICH_SYSTEM_PROMPT, fullUser)) as RawForm;
+  } catch (err) {
+    if ((err as { contentFilter?: boolean })?.contentFilter) {
+      return (await callModel(ENRICH_SYSTEM_PROMPT_SAFE, safeUser)) as RawForm;
+    }
+    throw err;
+  }
+}
 
 // Dedicated, protocol-only eligibility extraction. Best-effort: returns [] on
 // failure so a hiccup here never blocks the build.
@@ -67,15 +81,19 @@ export async function buildStudyFromDocuments(
 
   const detailLine = enrichDetailLine(o);
   const enriched = await mapPool([...uniqueForms.values()], ENRICH_CONCURRENCY, async (form) => {
+    const excerpt = excerptFor(corpus, form.name);
     const user =
       `STUDY: ${skeleton.studyTitle ?? ''}${skeleton.indication ? ` — ${skeleton.indication}` : ''}. ${detailLine}\n` +
       `TARGET FORM: "${form.name}"${form.description ? ` — ${form.description}` : ''}.${customLine}\n\n` +
       `Build the complete, sectioned field list for THIS form only, using the document excerpts below.` +
       universalRulesFor(form.name) +
       learnedPrefsContext(learned, form.name) +
-      `\n\n===== SOURCE EXCERPTS =====\n${excerptFor(corpus, form.name)}`;
+      `\n\n===== SOURCE EXCERPTS =====\n${excerpt}`;
+    const safeUser =
+      `Form: "${form.name}"${form.description ? ` (${form.description})` : ''}. Study: ${skeleton.studyTitle ?? ''}.\n` +
+      `List the data-entry fields for this form based on the source text below.\n\n${excerpt}`;
     try {
-      const r = await callModel(ENRICH_SYSTEM_PROMPT, user);
+      const r = await callEnrich(user, safeUser);
       return { key: norm(form.name), fields: r.fields ?? [], rules: r.rules ?? [] };
     } catch {
       return { key: norm(form.name), fields: [] as RawForm['fields'], rules: [] as RawForm['rules'] };
@@ -109,14 +127,18 @@ export async function regenerateFormContent(args: {
   const corpus = (args.protocolText || '').slice(0, MAX_CONTEXT_CHARS);
   const detailLine = enrichDetailLine(o);
   const promptLine = args.prompt?.trim() ? `\nADDITIONAL INSTRUCTIONS FOR THIS FORM (follow closely): ${args.prompt.trim()}` : '';
+  const excerpt = corpus ? excerptFor(corpus, args.formName) : '(no source text supplied — design from the form name and instructions)';
   const user =
     `STUDY: ${args.studyTitle ?? ''}${args.indication ? ` — ${args.indication}` : ''}. ${detailLine}\n` +
     `TARGET FORM: "${args.formName}"${args.formDescription ? ` — ${args.formDescription}` : ''}.${promptLine}\n\n` +
     `Build the complete, sectioned field list for THIS form only, using the document excerpts below.` +
     universalRulesFor(args.formName) +
     learnedPrefsContext(args.learned ?? new Map(), args.formName) +
-    `\n\n===== SOURCE EXCERPTS =====\n${corpus ? excerptFor(corpus, args.formName) : '(no source text supplied — design from the form name and instructions)'}`;
+    `\n\n===== SOURCE EXCERPTS =====\n${excerpt}`;
+  const safeUser =
+    `Form: "${args.formName}"${args.formDescription ? ` (${args.formDescription})` : ''}. Study: ${args.studyTitle ?? ''}.\n` +
+    `List the data-entry fields for this form based on the source text below.\n\n${excerpt}`;
 
-  const r = (await callModel(ENRICH_SYSTEM_PROMPT, user)) as RawForm;
+  const r = await callEnrich(user, safeUser);
   return { fields: normalizeFields(r.fields), rules: normalizeRules(r.rules) };
 }
