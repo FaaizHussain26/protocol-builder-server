@@ -201,12 +201,23 @@ export const DEFAULT_PREFERENCES: TemplatePreferences = {
   screeningOrder: true,
 };
 
+// A study "arm" — the top-level folder grouping a set of visits belong to.
+export type StudyArm =
+  | 'General'
+  | 'Study Visit'
+  | 'Unscheduled Visit'
+  | 'SAE'
+  | 'Early Termination'
+  | 'Reconsent';
+
 export interface StudyVisit {
   id: string;
   name: string;
   kind: 'visit' | 'log';
   timing?: string;
   window?: string;
+  /** Top-level arm (folder) this visit belongs to. Defaults to 'Study Visit'. */
+  arm?: StudyArm;
   forms: StudyForm[];
 }
 

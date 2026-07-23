@@ -23,6 +23,13 @@ export interface BuildJob {
   error?: string;
   createdAt: number;
   updatedAt: number;
+  // ---- Live progress (streamed to the UI via polling while status='pending'). ----
+  /** Human-readable current phase, e.g. "Building fields (3/40 forms)". */
+  phase?: string;
+  /** 0..100. */
+  progress?: number;
+  /** Lightweight live tree snapshot (arms → folders → form names + field counts). */
+  partial?: unknown;
 }
 
 const jobs = new Map<string, BuildJob>();
@@ -47,6 +54,14 @@ export function createJob(): BuildJob {
 
 export function getJob(id: string): BuildJob | undefined {
   return jobs.get(id);
+}
+
+// Merge live progress onto a pending job (phase/progress/partial).
+export function updateJob(id: string, patch: Partial<Pick<BuildJob, 'phase' | 'progress' | 'partial'>>): void {
+  const job = jobs.get(id);
+  if (!job) return;
+  Object.assign(job, patch);
+  job.updatedAt = Date.now();
 }
 
 export function completeJob(id: string, study: StudyModel, memoryUsed: number): void {

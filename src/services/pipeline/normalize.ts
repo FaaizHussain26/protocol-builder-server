@@ -70,6 +70,7 @@ export function normalizeStudy(raw: RawStudy, documents: IngestedDocument[]): St
       kind: v.kind === 'log' ? 'log' : 'visit',
       timing: v.timing || undefined,
       window: v.window || undefined,
+      arm: v.arm || 'Study Visit',
       forms: (v.forms ?? [])
         .filter((f) => (f.fields ?? []).length > 0)
         .map((f, fi): StudyForm => ({

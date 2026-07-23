@@ -5,7 +5,7 @@ import { applyScreeningOrder, addGeneralSections } from '../services/pipeline/ge
 import { retrieveSimilar, buildMemoryContext } from '../services/memory.service';
 import { loadLearnedPreferences } from '../services/editMemory.service';
 import { buildQuestionsContext } from '../services/pipeline/questionsContext';
-import { createJob, getJob, completeJob, completeJobResult, failJob } from '../services/buildJobs';
+import { createJob, getJob, completeJob, completeJobResult, failJob, updateJob } from '../services/buildJobs';
 import { HttpError } from '../middleware/errorHandler';
 import type { TemplatePreferences, IngestedDocument } from '../types/study';
 
@@ -42,10 +42,12 @@ async function runBuild(jobId: string, body: BuildRequestBody): Promise<void> {
     ]);
     const memoryContext = buildMemoryContext(memory);
 
-    let study = await buildStudyFromDocuments(protocolText, documents ?? [], opts, memoryContext, learned);
+    // Stream live phase/progress/tree onto the job as the staged build runs.
+    let study = await buildStudyFromDocuments(protocolText, documents ?? [], opts, memoryContext, learned,
+      (u) => updateJob(jobId, { phase: u.phase, progress: u.progress, partial: u.tree ?? undefined }));
 
-    // Phase 2: apply template preferences (date/time formats, signature, alerts),
-    // then optional Screening ordering and General Sections.
+    // Finalize: template preferences, Screening ordering, General Sections.
+    updateJob(jobId, { phase: 'Finalizing', progress: 96 });
     if (prefs) {
       study = applyTemplate(study, prefs);
       if (prefs.screeningOrder) study = applyScreeningOrder(study);
@@ -71,7 +73,7 @@ export async function buildStudy(req: Request, res: Response): Promise<void> {
 export async function getBuildStatus(req: Request, res: Response): Promise<void> {
   const job = getJob(String(req.params.jobId));
   if (!job) throw new HttpError(404, 'Job not found (it may have expired). Please try again.');
-  res.json({ status: job.status, study: job.study, result: job.result, memoryUsed: job.memoryUsed, error: job.error });
+  res.json({ status: job.status, study: job.study, result: job.result, memoryUsed: job.memoryUsed, error: job.error, phase: job.phase, progress: job.progress, partial: job.partial });
 }
 
 // Regenerating a form makes a full enrichment call, which can outlast a hosting

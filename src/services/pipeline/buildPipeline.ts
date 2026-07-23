@@ -5,7 +5,23 @@ import { SKELETON_SYSTEM_PROMPT, ENRICH_SYSTEM_PROMPT, ENRICH_SYSTEM_PROMPT_SAFE
 import { skeletonInput, eligibilityInput, excerptFor, mapPool, norm, MAX_CONTEXT_CHARS, ENRICH_CONCURRENCY } from './excerpt';
 import { normalizeStudy, normalizeFields, normalizeRules, type RawStudy, type RawForm } from './normalize';
 import { universalRulesFor, universalSkeletonRules } from './universalRules';
+import { masterForms, scaffoldFixedArms, eosFolders } from './arms';
 import { learnedPrefsContext } from '../editMemory.service';
+
+// A lightweight live view of the study tree, streamed to the UI during a build.
+export interface BuildTreeRow { arm: string; folder: string; kind: string; forms: { name: string; fieldCount: number }[] }
+export interface BuildProgressUpdate { phase: string; progress: number; tree?: BuildTreeRow[] }
+export type ProgressFn = (u: BuildProgressUpdate) => void;
+
+type LooseVisit = { arm?: string; name?: string; kind?: string; forms?: Array<{ name?: string; fields?: unknown[] }> };
+function liveTree(visits: LooseVisit[] | undefined): BuildTreeRow[] {
+  return (visits ?? []).map((v) => ({
+    arm: v.arm ?? 'Study Visit',
+    folder: v.name ?? '',
+    kind: v.kind === 'log' ? 'log' : 'visit',
+    forms: (v.forms ?? []).map((f) => ({ name: f.name ?? '', fieldCount: (f.fields ?? []).length })),
+  }));
+}
 
 // Enrich one form. If Azure's content filter flags the rich, instruction-heavy
 // prompt as a jailbreak, retry once with a neutral prompt (form context +
@@ -35,14 +51,18 @@ async function extractEligibility(corpus: string): Promise<RawStudy['eligibility
   }
 }
 
-// Two-phase build: (A) one big-context call → complete visit/log schedule + form
-// names; (B) parallel per-unique-form enrichment → detailed, sectioned fields.
+// Staged, streaming build. Stages: (1) structure (skeleton, no fields),
+// (2) fields (per-unique-form enrichment, streamed as each completes),
+// (3) eligibility (parallel, protocol-only), (4) replicate master forms into the
+// fixed arms, (5) return. `onProgress` fires between/within stages so the
+// controller can push live phase/progress/tree onto the job for the UI to poll.
 export async function buildStudyFromDocuments(
   protocolText: string,
   documents: IngestedDocument[],
   options: BuildOptions = {},
   memoryContext = '',
   learned: Map<string, string[]> = new Map(),
+  onProgress: ProgressFn = () => {},
 ): Promise<StudyModel> {
   const o = { ...DEFAULT_OPTIONS, ...options };
   const corpus = protocolText.length > MAX_CONTEXT_CHARS ? protocolText.slice(0, MAX_CONTEXT_CHARS) : protocolText;
@@ -50,37 +70,29 @@ export async function buildStudyFromDocuments(
     ? `\n\nUser custom instructions (follow closely):\n${o.customInstructions.trim()}`
     : '';
 
-  // ---- Phase A: complete visit/log schedule + form names (one call).
-  // memoryContext (similar prior builds) is appended so the model "remembers".
-  // In PARALLEL: a dedicated eligibility pass reads ONLY the protocol (no
-  // template/memory), so inclusion/exclusion criteria are always extracted
-  // straight from the protocol and never crowded out by the skeleton prompt. ----
-  const [skeleton, eligibility] = await Promise.all([
-    callModel(
-      SKELETON_SYSTEM_PROMPT + universalSkeletonRules() + customLine + memoryContext,
-      `Extract the study structure — the COMPLETE visit/log schedule from the SOA, plus the form names collected at each visit — from the following source document(s):\n\n${skeletonInput(corpus)}`,
-    ) as Promise<RawStudy>,
-    extractEligibility(corpus),
-  ]);
+  // Eligibility runs in parallel with structure+fields (protocol-only pass).
+  const eligP = extractEligibility(corpus);
 
-  // The protocol is authoritative for eligibility: prefer the dedicated pass
-  // whenever it found at least as many criteria as the skeleton did.
-  if ((eligibility?.length ?? 0) >= (skeleton.eligibility?.length ?? 0)) {
-    skeleton.eligibility = eligibility;
-  }
+  // ---- Stage 1: structure (visit/log schedule + form NAMES; no fields). ----
+  onProgress({ phase: 'Reading the protocol structure', progress: 6 });
+  const skeleton = (await callModel(
+    SKELETON_SYSTEM_PROMPT + universalSkeletonRules() + customLine + memoryContext,
+    `Extract the study structure — the COMPLETE visit/log schedule from the SOA, plus the form names collected at each visit — from the following source document(s):\n\n${skeletonInput(corpus)}`,
+  )) as RawStudy;
+  for (const v of skeleton.visits ?? []) v.arm = 'Study Visit';
+  onProgress({ phase: 'Structure ready — building forms', progress: 15, tree: liveTree(skeleton.visits) });
 
-  const visits = skeleton.visits ?? [];
-
-  // ---- Phase B: enrich each UNIQUE form name once, attach to every visit. ----
+  // ---- Stage 2: enrich each UNIQUE form once; stream as each completes. ----
   const uniqueForms = new Map<string, RawForm>();
-  for (const v of visits)
+  for (const v of skeleton.visits ?? [])
     for (const f of v.forms ?? []) {
       const key = norm(f.name);
       if (key && !uniqueForms.has(key)) uniqueForms.set(key, f);
     }
-
+  const total = uniqueForms.size || 1;
+  let done = 0;
   const detailLine = enrichDetailLine(o);
-  const enriched = await mapPool([...uniqueForms.values()], ENRICH_CONCURRENCY, async (form) => {
+  await mapPool([...uniqueForms.values()], ENRICH_CONCURRENCY, async (form) => {
     const excerpt = excerptFor(corpus, form.name);
     const user =
       `STUDY: ${skeleton.studyTitle ?? ''}${skeleton.indication ? ` — ${skeleton.indication}` : ''}. ${detailLine}\n` +
@@ -92,23 +104,37 @@ export async function buildStudyFromDocuments(
     const safeUser =
       `Form: "${form.name}"${form.description ? ` (${form.description})` : ''}. Study: ${skeleton.studyTitle ?? ''}.\n` +
       `List the data-entry fields for this form based on the source text below.\n\n${excerpt}`;
+    let fields: RawForm['fields'] = [];
+    let rules: RawForm['rules'] = [];
     try {
       const r = await callEnrich(user, safeUser);
-      return { key: norm(form.name), fields: r.fields ?? [], rules: r.rules ?? [] };
-    } catch {
-      return { key: norm(form.name), fields: [] as RawForm['fields'], rules: [] as RawForm['rules'] };
-    }
+      fields = r.fields ?? [];
+      rules = r.rules ?? [];
+    } catch { /* leave this form empty; normalize will drop it */ }
+    // Attach to every visit that collects this form, then stream the update.
+    const key = norm(form.name);
+    for (const v of skeleton.visits ?? [])
+      for (const f of v.forms ?? [])
+        if (norm(f.name) === key) { f.fields = fields; f.rules = rules; }
+    done += 1;
+    onProgress({ phase: `Building fields (${done}/${total} forms)`, progress: 15 + Math.round(55 * done / total), tree: liveTree(skeleton.visits) });
   });
-  const byForm = new Map(enriched.map((e) => [e.key, e]));
 
-  for (const v of visits) {
-    v.forms = (v.forms ?? []).map((f) => {
-      const e = byForm.get(norm(f.name));
-      return e ? { ...f, fields: e.fields, rules: e.rules } : f;
-    });
-  }
+  // ---- Stage 3: eligibility (already running; surface it as its own phase). ----
+  onProgress({ phase: 'Extracting eligibility (I/E) criteria', progress: 74, tree: liveTree(skeleton.visits) });
+  const eligibility = await eligP;
+  if ((eligibility?.length ?? 0) >= (skeleton.eligibility?.length ?? 0)) skeleton.eligibility = eligibility;
 
-  return normalizeStudy(skeleton, documents);
+  // Normalize the Study-Visit arm (drops forms that failed enrichment).
+  const base = normalizeStudy(skeleton, documents);
+
+  // ---- Stage 4: replicate the master forms into the fixed arms. ----
+  onProgress({ phase: 'Creating arms & folders', progress: 84 });
+  const master = masterForms(base.visits);
+  base.visits = [...base.visits, ...eosFolders(master, 'Study Visit'), ...scaffoldFixedArms(master)];
+  onProgress({ phase: 'Arms created', progress: 92, tree: liveTree(base.visits) });
+
+  return base;
 }
 
 // Re-enrich ONE form using an updated per-form prompt. Returns normalized
