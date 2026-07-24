@@ -89,6 +89,8 @@ export interface StudyForm {
   id: string;
   name: string;
   description?: string;
+  /** Free-text header/instructions shown at the top of the form. */
+  header?: string;
   appliedTemplate?: string | null;
   /** Per-form prompt used to (re)generate this form during review. */
   prompt?: string;
@@ -216,8 +218,8 @@ export interface StudyVisit {
   kind: 'visit' | 'log';
   timing?: string;
   window?: string;
-  /** Top-level arm (folder) this visit belongs to. Defaults to 'Study Visit'. */
-  arm?: StudyArm;
+  /** Top-level arm (main folder) — a StudyArm or a custom arm name. Defaults to 'Study Visit'. */
+  arm?: string;
   forms: StudyForm[];
 }
 
