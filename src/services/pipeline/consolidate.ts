@@ -1,4 +1,4 @@
-import type { StudyModel, StudyForm } from '../../types/study';
+import type { StudyModel, StudyForm, StudyField } from '../../types/study';
 
 // Deterministic post-build cleanup: consolidate routine labs into a single
 // "Lab Assessments" form and de-duplicate Height/Weight/BMI so they live once in
@@ -65,7 +65,7 @@ export function consolidateLabForms(study: StudyModel): StudyModel {
 
 // Clearly log/table-style forms are ALWAYS repeatable (guaranteed regardless of
 // what the AI returned). Other forms keep the AI's per-form "repeatable" value.
-const REPEATABLE_NAME = /\blog\b|adverse event|concomitant|con ?med|medical histor|dosing|allerg|deviation/i;
+const REPEATABLE_NAME = /\blog\b|vital sign|adverse event|concomitant|con ?med|medical histor|dosing|study drug|drug administration|treatment administration|allerg|deviation/i;
 export function markRepeatableForms(study: StudyModel): StudyModel {
   const mark = (f: StudyForm): StudyForm => {
     const isLog = REPEATABLE_NAME.test(f.name) || /log$/i.test(f.appliedTemplate ?? '');
@@ -77,52 +77,64 @@ export function markRepeatableForms(study: StudyModel): StudyModel {
 const HEIGHT = /\bheight\b/i;
 const WEIGHT = /\bweight\b/i;
 const BMI = /\bbmi\b|body mass index/i;
-const ANTHRO = /\b(height|weight|bmi)\b|body mass index/i;
+const ANTHRO = /\b(height|weight|bmi|bsa)\b|body mass index|body surface area/i;
 const isVitals = (name: string) => /vital sign/i.test(name) || /^\s*vs\s*$/i.test(name);
+const isPhysMeas = (name: string) => /physical measurement|anthropom/i.test(name);
 
-// Keep Height/Weight/BMI ONCE, in Vital Signs. Within each visit that has a
-// Vital Signs form, strip anthropometry fields from every other form (dropping a
-// form that becomes empty), and ensure Vital Signs carries a calculated BMI when
-// it has both Height and Weight. Visits without a Vital Signs form are left as-is
-// (no canonical home to move the fields into).
-export function dedupeAnthropometry(study: StudyModel): StudyModel {
+// Anthropometry (Height/Weight/BMI/BSA) belongs on a dedicated "Physical
+// Measurements" form, SEPARATE from Vital Signs (per the source-doc methodology).
+// Per visit: gather every anthropometry field, move them (de-duplicated by label)
+// into a Physical Measurements form (creating one just before Vital Signs when the
+// visit has anthropometry but no such form), strip them from all other forms
+// (dropping any that become empty), and ensure a calculated BMI is present.
+export function consolidateAnthropometry(study: StudyModel): StudyModel {
   const visits = study.visits.map((v) => {
-    const vitals = v.forms.find((f) => isVitals(f.name));
-    if (!vitals) return v;
+    const existingPM = v.forms.find((f) => isPhysMeas(f.name));
+    const hasAnthroElsewhere = v.forms.some((f) => !(existingPM && f.id === existingPM.id) && f.fields.some((fld) => ANTHRO.test(fld.label)));
+    if (!existingPM && !hasAnthroElsewhere) return v; // nothing to do
 
-    const forms: StudyForm[] = [];
+    const collected: StudyField[] = [];
+    const seen = new Set<string>();
+    const pushUnique = (fld: StudyField) => { const k = norm(fld.label); if (k && seen.has(k)) return; if (k) seen.add(k); collected.push(fld); };
+
+    // Seed with the PM form's own fields (keep its non-anthro fields too).
+    const pmOwnOther: StudyField[] = [];
+    if (existingPM) for (const fld of existingPM.fields) (ANTHRO.test(fld.label) ? pushUnique(fld) : pmOwnOther.push(fld));
+
+    // Strip anthropometry from every other form.
+    const others: StudyForm[] = [];
     for (const f of v.forms) {
-      if (f.id === vitals.id) { forms.push(f); continue; }
+      if (existingPM && f.id === existingPM.id) continue;
+      const anthro = f.fields.filter((fld) => ANTHRO.test(fld.label));
+      if (!anthro.length) { others.push(f); continue; }
+      anthro.forEach(pushUnique);
       const kept = f.fields.filter((fld) => !ANTHRO.test(fld.label));
-      if (kept.length === f.fields.length) { forms.push(f); continue; } // nothing to remove
       if (kept.length === 0) continue; // form was only anthropometry → drop it
-      forms.push({ ...f, fields: kept });
+      others.push({ ...f, fields: kept });
     }
 
-    // Ensure Vital Signs has a calculated BMI when it captures height & weight.
-    const idx = forms.findIndex((f) => f.id === vitals.id);
-    const vf = forms[idx];
-    const hasHeight = vf.fields.some((f) => HEIGHT.test(f.label));
-    const hasWeight = vf.fields.some((f) => WEIGHT.test(f.label));
-    const hasBMI = vf.fields.some((f) => BMI.test(f.label));
-    if (hasHeight && hasWeight && !hasBMI) {
-      const section = vf.fields.find((f) => HEIGHT.test(f.label) || WEIGHT.test(f.label))?.section;
-      forms[idx] = {
-        ...vf,
-        fields: [...vf.fields, {
-          id: uid('fld'),
-          label: 'BMI',
-          type: 'calculated',
-          required: false,
-          expression: 'weight / (height/100)^2',
-          section,
-          confidence: 'high',
-          completionGuidance: 'Auto-calculated from Height and Weight (kg/m²).',
-          source: 'Auto-calculated',
-          reviewStatus: 'pending',
-        }],
-      };
+    let pmFields = [...pmOwnOther, ...collected.map((fld) => ({ ...fld, section: fld.section?.trim() || 'Physical Measurements' }))];
+    // Ensure a calculated BMI when Height & Weight are present.
+    if (pmFields.some((f) => HEIGHT.test(f.label)) && pmFields.some((f) => WEIGHT.test(f.label)) && !pmFields.some((f) => BMI.test(f.label))) {
+      pmFields = [...pmFields, {
+        id: uid('fld'), label: 'BMI', type: 'calculated', required: false,
+        expression: 'weight / (height/100)^2', section: 'Physical Measurements',
+        confidence: 'high', completionGuidance: 'Auto-calculated from Height and Weight (kg/m²).',
+        source: 'Auto-calculated', reviewStatus: 'pending',
+      }];
     }
+    const pmForm: StudyForm = existingPM
+      ? { ...existingPM, name: 'Physical Measurements', fields: pmFields }
+      : { id: uid('form'), name: 'Physical Measurements', appliedTemplate: null, fields: pmFields, rules: [] };
+
+    // Place PM just before Vital Signs (else at the front of the form list).
+    const forms: StudyForm[] = [];
+    let placed = false;
+    for (const f of others) {
+      if (!placed && isVitals(f.name)) { forms.push(pmForm); placed = true; }
+      forms.push(f);
+    }
+    if (!placed) forms.unshift(pmForm);
     return { ...v, forms };
   });
   return { ...study, visits };

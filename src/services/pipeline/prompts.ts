@@ -11,10 +11,22 @@ export const DOC_ROLES = `DOCUMENT ROLES — when multiple documents are provide
 - A "CRF Completion Requirements" / "EDC Completion Guidelines" / eCRF data-entry guide describes how to FILL forms/fields (labels, formats, completion guidance). It is the AUTHORITATIVE source for the exact set of forms and fields. When an eCRF/CRF document is present, COPY ALL of its forms COMPLETELY — every form and every field — do not sample or summarize.
 - When both are present: build the visit schedule from the protocol's SOA, take the field-level form content from the eCRF guide, and use the protocol (incl. SOA footnotes) to SET validation/edit-check rules.`;
 
+// Source-document design philosophy (distilled from the CRA/CDM/GCP master
+// methodology). Reused by both build phases so the output is an audit-ready
+// source worksheet that mirrors the CRF/EDC one-to-one.
+export const SOURCE_DOC_PRINCIPLES = `SOURCE-DOCUMENT PHILOSOPHY (you are a CRA / Clinical Data Manager / GCP specialist building an audit-ready oncology source worksheet):
+- The uploaded CRF/eCRF is a direct copy of the EDC and is the MASTER BLUEPRINT. Every CRF field must have a corresponding place in the output — none omitted. Do NOT add fields that are not in the CRF unless the Protocol specifically requires them.
+- The Protocol is NOT used to redesign forms. Consult it only for: references, footnotes, inclusion/exclusion criteria, Schedule of Assessments, assessment timing, study procedures, protocol-specific wording, visit windows, and study-drug instructions. When the CRF references the Protocol, incorporate the required instruction; never guess protocol requirements.
+- Priority when sources differ: (1) Protocol, (2) CRF.
+- Mirror the CRF structure and EDC workflow: same visit order, same form/page order, similar terminology, so a user can transcribe directly into the EDC.
+- Reproduce field types faithfully (radio, checkbox, dropdown, date, time, numeric, signature, file/upload, conditional). Add an upload (file) placeholder wherever the CRF has an upload; add an investigator signature/date where the CRF signs off; reproduce conditional questions with their trigger.`;
+
 // ===== PHASE A — skeleton: the COMPLETE visit/log schedule + form NAMES only. =====
 export const SKELETON_SYSTEM_PROMPT = `You are an expert clinical-trial eSource builder. In THIS step you extract the STUDY STRUCTURE ONLY: study metadata, the COMPLETE visit/log schedule driven by the Schedule of Activities (SOA), and the NAMES of the forms collected at each visit. You do NOT produce fields in this step.
 
 ${DOC_ROLES}
+
+${SOURCE_DOC_PRINCIPLES}
 
 WORKFLOW:
 1. Identify the PRIMARY protocol (the one with the SOA). Extract study title, protocol number, phase, indication, sponsor, objectives, and inclusion/exclusion criteria.
@@ -27,7 +39,12 @@ WORKFLOW:
    - Capture each visit's timing and window from the header/footnotes.
    - Continuous logs spanning the whole study (Adverse Events, Concomitant Medications, etc.) are kind "log"; everything tied to a specific SOA column is kind "visit".
    - Re-count before finishing: the number of "visit" entries MUST equal the number of SOA visit columns.
-4. For each visit, list the FORMS collected at it (by NAME only). A procedure ROW marked in that visit's column becomes a form for that visit ONLY when it is ROUTINELY collected there. READ THE FOOTNOTES / CELL MARKERS: when a mark is conditional or optional ("as needed", "if clinically indicated", "if abnormal", "unscheduled only", "only at …", "PRN", a dash/blank/"X" meaning NOT done, or a footnote that restricts when/where it applies), do NOT attach that form to that visit as a routine form — instead raise a low-confidence "finding" noting the conditional procedure. Use the protocol's context, not just the raw SOA grid: do not spray a procedure into visits where the footnotes exclude it. Capture every ROUTINE row; do not sample. If an eCRF/CRF document is present, ALSO ensure every form it defines appears on the visit(s) where it is collected. Use standard names where they match: Informed Consent, Demographics, Eligibility / Inclusion-Exclusion, Medical History, Vital Signs, Physical Examination, ECG, Laboratory, Concomitant Medications, Adverse Events, Pharmacokinetics, Questionnaires, Disposition / End of Study, etc.
+4. For each visit, list the FORMS collected at it (by NAME only). A procedure ROW marked in that visit's column becomes a form for that visit ONLY when it is ROUTINELY collected there. READ THE FOOTNOTES / CELL MARKERS: when a mark is conditional or optional ("as needed", "if clinically indicated", "if abnormal", "unscheduled only", "only at …", "PRN", a dash/blank/"X" meaning NOT done, or a footnote that restricts when/where it applies), do NOT attach that form to that visit as a routine form — instead raise a low-confidence "finding" noting the conditional procedure. Use the protocol's context, not just the raw SOA grid: do not spray a procedure into visits where the footnotes exclude it. Capture every ROUTINE row; do not sample. If an eCRF/CRF document is present, ALSO ensure every form it defines appears on the visit(s) where it is collected. Use standard names where they match: Informed Consent, Demographics, Eligibility / Inclusion-Exclusion, Medical History, Vital Signs, Physical Examination, ECG, Lab Assessments, Concomitant Medications, Adverse Events, Pharmacokinetics, Questionnaires, Disposition / End of Study, etc.
+5. SOURCE-DOCUMENT STRUCTURE — organize the forms the CRF/SOA actually contain per this methodology (organize, do NOT invent forms absent from the CRF/Protocol):
+   - The Screening visit typically splits into three forms: (1) Consent Process Documentation, (2) Eligibility Determination, (3) Screening (procedures).
+   - Keep these as SEPARATE forms when present: "Lab Assessments" (ONE page consolidating routine labs), "Physical Measurements" (Height/Weight/BMI/BSA — SEPARATE from Vital Signs), "Vital Signs" (a repeated logline for pre-/post-dose timepoints; NO height/weight), "ECG", "Physical Examination", "Imaging Assessment" (separate from) "Tumor Evaluation", "ECOG Performance Status", "Screening Disposition", "Progress Notes & Uploads", and a "Visit Completion" form LAST.
+   - Give each protocol-specified extra assessment its own form (Neurological Exam, ECHO/MUGA, Ophthalmology, Pulmonary Function Test, ICE score, Bone Marrow, central-lab assessments).
+   - Subsequent (treatment) visits mirror the Screening structure and ADD a "Study Drug Administration" form.
 
 Output ONLY valid JSON (NO fields and NO rules in this step):
 {
@@ -92,19 +109,21 @@ Output ONLY valid JSON:
 Return ONLY the JSON object. No markdown, no prose.`;
 
 // ===== PHASE B — enrich ONE form into its complete, sectioned questionnaire. =====
-export const ENRICH_SYSTEM_PROMPT = `You are an expert clinical-trial eSource builder. Given source-document excerpts and ONE target form, produce the COMPLETE, detailed list of typed fields for that form — a real eSource questionnaire grouped into sections.
+export const ENRICH_SYSTEM_PROMPT = `You are a CRA / Clinical Data Manager / GCP specialist building an audit-ready oncology source worksheet. Given source-document excerpts and ONE target form, produce the COMPLETE, detailed list of typed fields for that form — a real eSource questionnaire grouped into sections, that mirrors the CRF field-for-field.
 
 ${DOC_ROLES}
+
+${SOURCE_DOC_PRINCIPLES}
 
 For the TARGET FORM:
 - COMPLETENESS — search the excerpts (especially any CRF/EDC Completion Requirements guide) for this form and emit EVERY field it defines. When the guide enumerates fields as numbered sub-items (e.g. "3.16.1 Category", "3.16.2 AE ID", … through "3.16.18 …"), reproduce EACH as its own field with the exact label and its data-entry instruction in completionGuidance. Do NOT truncate or sample — copy the eCRF form complete. Rich forms (Adverse Events, Laboratory, Concomitant Medications, ECG) commonly run 12-25+ fields. Use fewer only when the source genuinely defines fewer.
 - FOOTNOTE-DRIVEN RULES — apply the SOA table FOOTNOTES and protocol text that govern this form to populate field-level "rules" (edit checks) and completionGuidance (e.g. allowed ranges, required-if conditions, timing windows, units, "record only if abnormal"). The protocol SETS the rules.
 - CONDITIONAL FIELDS — reproduce dependent/branching fields ("If Yes, record …", "If abnormal, …", "If Other, specify") as their own fields, state the trigger in completionGuidance, and add a matching "required-if" rule.
-- SECTIONS — set the "section" property on every field to group the form into correctly named subsections, in source order (e.g. Vital Signs → "Anthropometry" then "Blood Pressure & Pulse"; Adverse Events → "Event Details", "Seriousness", "Causality", "Action & Outcome"). Do not leave fields ungrouped when the form has more than ~5 fields.
+- SECTIONS — set the "section" property on every field to group the form into correctly named subsections, in source order (e.g. Physical Examination → body systems; Adverse Events → "Event Details", "Seriousness", "Causality", "Action & Outcome"). Do not leave fields ungrouped when the form has more than ~5 fields.
 - TYPES — choose the best field type (integer/decimal for numerics, datetime for date+time, multiselect for pick-many, signature for sign-offs, file for uploads, calculated with an "expression" for derived values like BMI/Age). Only include "options" for select/multiselect/radio/checkbox.
 - TRACEABILITY — every field includes source (document name), and where determinable protocolSection, page, a short originalText snippet, and a confidence. Include at least one or two "low"/"medium" confidence fields where the source is ambiguous.
 - Give EVERY field a completionGuidance. Provide 1-3 sensible validation rules for the form.
-- REPEATABLE — set "repeatable": true when this form is a LOG or TABLE the site fills with MULTIPLE records over the study (e.g. Adverse Events, Concomitant Medications, Medical History, Lab Assessments, Dosing Log, any "…Log"); set false for a form captured ONCE per visit (Demographics, single Vital Signs reading, etc.).
+- REPEATABLE — set "repeatable": true when this form is a LOG, TABLE, or repeated LOGLINE the site fills with MULTIPLE records/timepoints (e.g. Vital Signs [pre-/post-dose timepoints], Adverse Events, Concomitant Medications, Medical History, Lab Assessments, Study Drug Administration, any "…Log"); set false for a form captured ONCE per visit (Demographics, Physical Measurements, Eligibility, etc.).
 
 Output ONLY valid JSON for THIS one form:
 {
@@ -140,4 +159,45 @@ export function enrichDetailLine(o: ResolvedOptions): string {
   if (o.detailLevel === 'concise') return 'Keep it lean: the most important 4-6 fields, still grouped into sections.';
   if (o.detailLevel === 'detailed') return 'Be EXHAUSTIVE: emit every field the source defines for this form (12-25+ for rich forms), reproducing every enumerated sub-item, all grouped into sections.';
   return 'Use a realistic field count that follows the source (typically 6-12, more when the source enumerates more), grouped into sections.';
+}
+
+// Per-form-type source-document design guidance, scoped to the target form so each
+// enrichment call only carries the guidance relevant to THAT form (keeps tokens
+// low). Distilled from the CRA/CDM master methodology. Appended to the enrich
+// user message alongside the universal rules.
+export function sourceDocFieldGuidance(formName: string): string {
+  const n = formName.toLowerCase();
+  const g: string[] = [];
+  const routineLab = /lab|hematolog|chemistr|urinalys|coagulat|serolog/.test(n) && !/genetic|pharmacokinet|\bpk\b|exploratory|biomarker/.test(n);
+  if (routineLab)
+    g.push('Lab Assessments is ONE checklist page. For EACH required test emit: Test Name, Performed (yes/no), Collection Date (date), Collection Time (time), Result (Normal/Abnormal), Clinical Significance (Clinically Significant / Not Clinically Significant), and a Laboratory Report upload (file). Group tests into sections (Hematology, Chemistry, Urinalysis, Coagulation).');
+  if (/genetic|pharmacokinet|\bpk\b|exploratory|biomarker/.test(n))
+    g.push('This is a specialty lab (Genetic/PK/Exploratory) — keep it as its OWN form, distinct from routine Lab Assessments.');
+  if (/physical measurement|anthropom/.test(n))
+    g.push('Physical Measurements page: Height, Weight, BMI (calculated), Body Surface Area (calculated, if protocol-required). Do NOT include Blood Pressure/Pulse/Temperature here.');
+  if (/vital sign/.test(n))
+    g.push('Vital Signs is a REPEATABLE logline (repeatable=true) for pre-dose/post-dose/multiple timepoints — include a "Timepoint" field. Parameters: Blood Pressure, Pulse, Temperature, Respiratory Rate, Oxygen Saturation. Do NOT include Height/Weight/BMI (those live on Physical Measurements).');
+  if (/\becg\b|electrocardiogram/.test(n))
+    g.push('ECG page: "Was ECG performed?" (yes/no), Date, Time, Interpretation (Normal / Abnormal Clinically Significant / Abnormal Not Clinically Significant), an ECG upload (file), and an investigator signature. If the protocol requires triplicate/repeated ECGs, set repeatable=true.');
+  if (/physical exam/.test(n))
+    g.push('Physical Examination: each body system as Normal/Abnormal (or a checklist, per the CRF); end with "Were any clinically significant findings observed?" plus a findings/comments text field.');
+  if (/imaging|\bct\b|\bmri\b|\bpet\b|\bscan\b/.test(n))
+    g.push('Imaging Assessment: modality, date, anatomical region, and an imaging upload (file). Do NOT include tumor response here.');
+  if (/tumou?r|recist|lugano|response/.test(n))
+    g.push('Tumor Evaluation: response assessment (e.g. RECIST/Lugano). Do NOT duplicate imaging acquisition details.');
+  if (/ecog|performance status/.test(n))
+    g.push('ECOG Performance Status: the standard 0-5 ECOG scale (select/radio) plus an investigator signature.');
+  if (/consent/.test(n))
+    g.push('Consent: "Was informed consent obtained?", date obtained, Protocol Version, Informed Consent Version, a signed ICF upload (file), and the signature of the person obtaining consent. Add a section for each optional consent (research sample, genetic, biomarker, future research) when present.');
+  if (/eligibility|inclusion|exclusion/.test(n))
+    g.push('Eligibility Determination: ONE Yes/No/N/A field per criterion, using the EXACT protocol wording and numbering — never combine criteria.');
+  if (/disposition|screen fail/.test(n))
+    g.push('Disposition: Completed vs Screen Failure (+ reason), date, investigator signature.');
+  if (/visit completion/.test(n))
+    g.push('Visit Completion mirrors the CRF: continue to next visit? medical history reviewed? ongoing/new AEs? conmed changes? procedures performed? withdrawal? discontinuation criteria met? comments — each Yes carrying a conditional note to complete the related form (AE / Concomitant Medications / Consent Withdrawal).');
+  if (/study drug|dosing|drug administration|treatment administration/.test(n))
+    g.push('Study Drug Administration: all protocol-required administration details (drug, dose, route, date/time, lot/kit number, administered by, etc.); repeatable when multiple administrations occur.');
+  if (/progress note/.test(n))
+    g.push('Progress Notes & Uploads: a general upload (file) placeholder, a free-text progress-notes area, and a "Page completed by" field.');
+  return g.length ? `\n\nSOURCE-DOCUMENT DESIGN FOR THIS FORM:\n- ${g.join('\n- ')}` : '';
 }

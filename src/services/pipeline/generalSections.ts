@@ -7,6 +7,7 @@ const SCREENING_ORDER = [
   'Demographics',
   'Inclusion/Exclusion Criteria',
   'Eligibility',
+  'Physical Measurements',
   'Vital Signs',
   'Physical Examination',
   'ECG',

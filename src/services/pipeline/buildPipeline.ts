@@ -1,12 +1,12 @@
 import type { StudyModel, BuildOptions, IngestedDocument } from '../../types/study';
 import { DEFAULT_OPTIONS } from '../../types/study';
 import { callModel } from './azureClient';
-import { SKELETON_SYSTEM_PROMPT, ENRICH_SYSTEM_PROMPT, ENRICH_SYSTEM_PROMPT_SAFE, ELIGIBILITY_SYSTEM_PROMPT, ECRF_FORMS_SYSTEM_PROMPT, enrichDetailLine } from './prompts';
+import { SKELETON_SYSTEM_PROMPT, ENRICH_SYSTEM_PROMPT, ENRICH_SYSTEM_PROMPT_SAFE, ELIGIBILITY_SYSTEM_PROMPT, ECRF_FORMS_SYSTEM_PROMPT, enrichDetailLine, sourceDocFieldGuidance } from './prompts';
 import { skeletonInput, eligibilityInput, ecrfFormsInput, excerptFor, mapPool, norm, MAX_CONTEXT_CHARS, ENRICH_CONCURRENCY } from './excerpt';
 import { normalizeStudy, normalizeFields, normalizeRules, type RawStudy, type RawForm, type RawVisit } from './normalize';
 import { universalRulesFor, universalSkeletonRules } from './universalRules';
 import { masterForms, scaffoldFixedArms, eosFolders } from './arms';
-import { consolidateLabForms, dedupeAnthropometry, markRepeatableForms } from './consolidate';
+import { consolidateLabForms, consolidateAnthropometry, markRepeatableForms } from './consolidate';
 import { learnedPrefsContext } from '../editMemory.service';
 
 // A lightweight live view of the study tree, streamed to the UI during a build.
@@ -161,6 +161,7 @@ export async function buildStudyFromDocuments(
       `TARGET FORM: "${form.name}"${form.description ? ` — ${form.description}` : ''}.${customLine}\n\n` +
       `Build the complete, sectioned field list for THIS form only, using the document excerpts below.` +
       universalRulesFor(form.name) +
+      sourceDocFieldGuidance(form.name) +
       learnedPrefsContext(learned, form.name) +
       `\n\n===== SOURCE EXCERPTS =====\n${excerpt}`;
     const safeUser =
@@ -196,7 +197,7 @@ export async function buildStudyFromDocuments(
   // merge routine labs into one "Lab Assessments" form, and keep Height/Weight/BMI
   // once (in Vital Signs, with a calculated BMI).
   base = consolidateLabForms(base);
-  base = dedupeAnthropometry(base);
+  base = consolidateAnthropometry(base);
   base = markRepeatableForms(base);
 
   // ---- Stage 4: replicate the master forms into the fixed arms. ----
@@ -230,6 +231,7 @@ export async function regenerateFormContent(args: {
     `TARGET FORM: "${args.formName}"${args.formDescription ? ` — ${args.formDescription}` : ''}.${promptLine}\n\n` +
     `Build the complete, sectioned field list for THIS form only, using the document excerpts below.` +
     universalRulesFor(args.formName) +
+    sourceDocFieldGuidance(args.formName) +
     learnedPrefsContext(args.learned ?? new Map(), args.formName) +
     `\n\n===== SOURCE EXCERPTS =====\n${excerpt}`;
   const safeUser =
