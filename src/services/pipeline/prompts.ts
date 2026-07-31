@@ -27,7 +27,7 @@ WORKFLOW:
    - Capture each visit's timing and window from the header/footnotes.
    - Continuous logs spanning the whole study (Adverse Events, Concomitant Medications, etc.) are kind "log"; everything tied to a specific SOA column is kind "visit".
    - Re-count before finishing: the number of "visit" entries MUST equal the number of SOA visit columns.
-4. For each visit, list the FORMS collected at it (by NAME only). EVERY procedure ROW marked in that visit's column becomes a form — capture every row, none skipped. If an eCRF/CRF document is present, ALSO ensure every form it defines appears on the visit(s) where it is collected. Use standard names where they match: Informed Consent, Demographics, Eligibility / Inclusion-Exclusion, Medical History, Vital Signs, Physical Examination, ECG, Laboratory, Concomitant Medications, Adverse Events, Pharmacokinetics, Questionnaires, Disposition / End of Study, etc.
+4. For each visit, list the FORMS collected at it (by NAME only). A procedure ROW marked in that visit's column becomes a form for that visit ONLY when it is ROUTINELY collected there. READ THE FOOTNOTES / CELL MARKERS: when a mark is conditional or optional ("as needed", "if clinically indicated", "if abnormal", "unscheduled only", "only at …", "PRN", a dash/blank/"X" meaning NOT done, or a footnote that restricts when/where it applies), do NOT attach that form to that visit as a routine form — instead raise a low-confidence "finding" noting the conditional procedure. Use the protocol's context, not just the raw SOA grid: do not spray a procedure into visits where the footnotes exclude it. Capture every ROUTINE row; do not sample. If an eCRF/CRF document is present, ALSO ensure every form it defines appears on the visit(s) where it is collected. Use standard names where they match: Informed Consent, Demographics, Eligibility / Inclusion-Exclusion, Medical History, Vital Signs, Physical Examination, ECG, Laboratory, Concomitant Medications, Adverse Events, Pharmacokinetics, Questionnaires, Disposition / End of Study, etc.
 
 Output ONLY valid JSON (NO fields and NO rules in this step):
 {
@@ -61,8 +61,8 @@ export const ELIGIBILITY_SYSTEM_PROMPT = `You are an expert clinical-trial eSour
 
 RULES:
 - Find the Inclusion Criteria and Exclusion Criteria sections and extract EVERY criterion, one entry each. Do not summarize, merge, skip, or cap the list — if there are 25 inclusion and 30 exclusion criteria, output all 55.
-- Preserve the original wording of each criterion in "criterion".
-- In "logic", state the pass/fail check in plain language (e.g. "PASS if age >= 18 and <= 65").
+- COPY EACH CRITERION VERBATIM into "criterion" — character-for-character, exactly as written in the protocol. Do NOT paraphrase, reword, shorten, clean up, re-punctuate, or "improve" the text. Keep the criterion's own number/letter identifier at the start (e.g. "1.", "18a") and preserve any sub-parts — output each distinct criterion as its own entry with its exact text.
+- Put the derived pass/fail check ONLY in "logic" (plain language, e.g. "PASS if age >= 18 and <= 65"). Never let that plain-language logic leak into "criterion" — "criterion" is the untouched source text.
 - Base everything ONLY on the protocol text. Ignore any form/template/preferences context.
 
 Output ONLY valid JSON:
@@ -70,6 +70,24 @@ Output ONLY valid JSON:
   "eligibility": [
     { "id": "e1", "kind": "inclusion | exclusion", "criterion": "original text", "logic": "pass/fail logic", "confidence": "high|medium|low" }
   ]
+}
+Return ONLY the JSON object. No markdown, no prose.`;
+
+// ===== eCRF-forms discovery — the forms the eCRF/CRF guide defines. =====
+// The SOA-only skeleton never sees the eCRF (soaDocsOnly strips it), so
+// study-specific forms defined only in the eCRF would be lost. This pass reads
+// the eCRF guide and lists every form it defines, to be merged into the structure.
+export const ECRF_FORMS_SYSTEM_PROMPT = `You are an expert clinical-trial eSource builder. You are given the eCRF / CRF Completion Requirements guide (NOT the protocol SOA). Your ONLY task is to list EVERY form (CRF) the eCRF defines — especially STUDY-SPECIFIC forms a generic template would miss.
+
+RULES:
+- Enumerate every distinct form/CRF in the guide by its EXACT name. Do not skip, sample, merge, summarize, or cap the list.
+- For each form, if the guide indicates which visit(s) collect it, put a short hint in "visitHint" (e.g. "Screening", "Every visit", "Day 1"); otherwise null.
+- Set "studySpecific" to true when the form is particular to THIS study (not a generic Demographics / Vital Signs / Adverse Events type), else false.
+- Do NOT invent forms that are not present in the document.
+
+Output ONLY valid JSON:
+{
+  "forms": [ { "name": "string (exact eCRF form name)", "visitHint": "string or null", "studySpecific": true } ]
 }
 Return ONLY the JSON object. No markdown, no prose.`;
 
@@ -86,9 +104,11 @@ For the TARGET FORM:
 - TYPES — choose the best field type (integer/decimal for numerics, datetime for date+time, multiselect for pick-many, signature for sign-offs, file for uploads, calculated with an "expression" for derived values like BMI/Age). Only include "options" for select/multiselect/radio/checkbox.
 - TRACEABILITY — every field includes source (document name), and where determinable protocolSection, page, a short originalText snippet, and a confidence. Include at least one or two "low"/"medium" confidence fields where the source is ambiguous.
 - Give EVERY field a completionGuidance. Provide 1-3 sensible validation rules for the form.
+- REPEATABLE — set "repeatable": true when this form is a LOG or TABLE the site fills with MULTIPLE records over the study (e.g. Adverse Events, Concomitant Medications, Medical History, Lab Assessments, Dosing Log, any "…Log"); set false for a form captured ONCE per visit (Demographics, single Vital Signs reading, etc.).
 
 Output ONLY valid JSON for THIS one form:
 {
+  "repeatable": true,
   "fields": [
     { "label": "string", "type": "text|textarea|number|integer|decimal|date|datetime|time|select|multiselect|radio|checkbox|yesno|signature|file|calculated", "required": true,
       "options": ["..."], "section": "string or null", "expression": "string or null (only for 'calculated')", "confidence": "high|medium|low",
@@ -105,6 +125,7 @@ export const ENRICH_SYSTEM_PROMPT_SAFE = `You are a clinical data manager design
 
 Output ONLY valid JSON:
 {
+  "repeatable": false,
   "fields": [
     { "label": "string", "type": "text|textarea|number|integer|decimal|date|datetime|time|select|multiselect|radio|checkbox|yesno|signature|file|calculated", "required": true,
       "options": ["..."], "section": "string or null", "expression": "string or null", "confidence": "high|medium|low",

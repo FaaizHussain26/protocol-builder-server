@@ -10,7 +10,7 @@ const SCREENING_ORDER = [
   'Vital Signs',
   'Physical Examination',
   'ECG',
-  'Laboratory',
+  'Lab Assessments',
   'Progress Notes',
   'Completion',
 ];

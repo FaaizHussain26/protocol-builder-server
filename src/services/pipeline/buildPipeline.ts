@@ -1,11 +1,12 @@
 import type { StudyModel, BuildOptions, IngestedDocument } from '../../types/study';
 import { DEFAULT_OPTIONS } from '../../types/study';
 import { callModel } from './azureClient';
-import { SKELETON_SYSTEM_PROMPT, ENRICH_SYSTEM_PROMPT, ENRICH_SYSTEM_PROMPT_SAFE, ELIGIBILITY_SYSTEM_PROMPT, enrichDetailLine } from './prompts';
-import { skeletonInput, eligibilityInput, excerptFor, mapPool, norm, MAX_CONTEXT_CHARS, ENRICH_CONCURRENCY } from './excerpt';
-import { normalizeStudy, normalizeFields, normalizeRules, type RawStudy, type RawForm } from './normalize';
+import { SKELETON_SYSTEM_PROMPT, ENRICH_SYSTEM_PROMPT, ENRICH_SYSTEM_PROMPT_SAFE, ELIGIBILITY_SYSTEM_PROMPT, ECRF_FORMS_SYSTEM_PROMPT, enrichDetailLine } from './prompts';
+import { skeletonInput, eligibilityInput, ecrfFormsInput, excerptFor, mapPool, norm, MAX_CONTEXT_CHARS, ENRICH_CONCURRENCY } from './excerpt';
+import { normalizeStudy, normalizeFields, normalizeRules, type RawStudy, type RawForm, type RawVisit } from './normalize';
 import { universalRulesFor, universalSkeletonRules } from './universalRules';
 import { masterForms, scaffoldFixedArms, eosFolders } from './arms';
+import { consolidateLabForms, dedupeAnthropometry, markRepeatableForms } from './consolidate';
 import { learnedPrefsContext } from '../editMemory.service';
 
 // A lightweight live view of the study tree, streamed to the UI during a build.
@@ -51,6 +52,58 @@ async function extractEligibility(corpus: string): Promise<RawStudy['eligibility
   }
 }
 
+// Discovery of forms the eCRF/CRF guide defines. The SOA-only skeleton never
+// sees the eCRF, so study-specific forms defined there would be lost — this pass
+// reads the eCRF docs and lists their forms for merging into the structure.
+// Best-effort: [] on failure or when there is no separate eCRF document.
+type EcrfForm = { name: string; visitHint?: string | null; studySpecific?: boolean };
+async function extractEcrfForms(corpus: string): Promise<EcrfForm[]> {
+  const input = ecrfFormsInput(corpus);
+  if (!input.trim()) return [];
+  try {
+    const r = (await callModel(
+      ECRF_FORMS_SYSTEM_PROMPT,
+      `List EVERY form defined in the eCRF/CRF completion guide below.\n\n${input}`,
+    )) as { forms?: Array<{ name?: string; visitHint?: string | null; studySpecific?: boolean }> };
+    return (r.forms ?? [])
+      .filter((f) => f.name && f.name.trim())
+      .map((f) => ({ name: f.name!.trim(), visitHint: f.visitHint ?? null, studySpecific: !!f.studySpecific }));
+  } catch {
+    return [];
+  }
+}
+
+// Merge eCRF-defined forms the skeleton missed into skeleton.visits (in place).
+// A form already present anywhere (by normalized name) is skipped; a new form is
+// attached to the visit its visitHint points at, else the Screening visit, else
+// the first visit. Fields are filled later by the enrichment stage.
+function mergeEcrfForms(skeleton: RawStudy, ecrf: EcrfForm[]): number {
+  const visits = skeleton.visits ?? [];
+  if (!visits.length || !ecrf.length) return 0;
+  const present = new Set<string>();
+  for (const v of visits) for (const f of v.forms ?? []) present.add(norm(f.name));
+
+  const findVisit = (hint?: string | null): RawVisit => {
+    if (hint) {
+      const h = norm(hint);
+      const hit = visits.find((v) => h && (norm(v.name).includes(h) || h.includes(norm(v.name))));
+      if (hit) return hit;
+    }
+    return visits.find((v) => /screening/i.test(v.name ?? '')) ?? visits[0];
+  };
+
+  let added = 0;
+  for (const f of ecrf) {
+    const key = norm(f.name);
+    if (!key || present.has(key)) continue;
+    const target = findVisit(f.visitHint);
+    (target.forms ??= []).push({ name: f.name } as RawForm);
+    present.add(key);
+    added += 1;
+  }
+  return added;
+}
+
 // Staged, streaming build. Stages: (1) structure (skeleton, no fields),
 // (2) fields (per-unique-form enrichment, streamed as each completes),
 // (3) eligibility (parallel, protocol-only), (4) replicate master forms into the
@@ -70,8 +123,10 @@ export async function buildStudyFromDocuments(
     ? `\n\nUser custom instructions (follow closely):\n${o.customInstructions.trim()}`
     : '';
 
-  // Eligibility runs in parallel with structure+fields (protocol-only pass).
+  // Eligibility + eCRF-form discovery run in parallel with structure (both read
+  // the corpus only, so they overlap the skeleton call).
   const eligP = extractEligibility(corpus);
+  const ecrfP = extractEcrfForms(corpus);
 
   // ---- Stage 1: structure (visit/log schedule + form NAMES; no fields). ----
   onProgress({ phase: 'Reading the protocol structure', progress: 6 });
@@ -80,7 +135,14 @@ export async function buildStudyFromDocuments(
     `Extract the study structure — the COMPLETE visit/log schedule from the SOA, plus the form names collected at each visit — from the following source document(s):\n\n${skeletonInput(corpus)}`,
   )) as RawStudy;
   for (const v of skeleton.visits ?? []) v.arm = 'Study Visit';
-  onProgress({ phase: 'Structure ready — building forms', progress: 15, tree: liveTree(skeleton.visits) });
+
+  // Merge in forms the eCRF defines that the SOA-only skeleton missed.
+  const added = mergeEcrfForms(skeleton, await ecrfP);
+  onProgress({
+    phase: added ? `Structure ready — added ${added} eCRF form(s), building forms` : 'Structure ready — building forms',
+    progress: 15,
+    tree: liveTree(skeleton.visits),
+  });
 
   // ---- Stage 2: enrich each UNIQUE form once; stream as each completes. ----
   const uniqueForms = new Map<string, RawForm>();
@@ -106,16 +168,18 @@ export async function buildStudyFromDocuments(
       `List the data-entry fields for this form based on the source text below.\n\n${excerpt}`;
     let fields: RawForm['fields'] = [];
     let rules: RawForm['rules'] = [];
+    let repeatable: boolean | undefined;
     try {
       const r = await callEnrich(user, safeUser);
       fields = r.fields ?? [];
       rules = r.rules ?? [];
+      repeatable = r.repeatable;
     } catch { /* leave this form empty; normalize will drop it */ }
     // Attach to every visit that collects this form, then stream the update.
     const key = norm(form.name);
     for (const v of skeleton.visits ?? [])
       for (const f of v.forms ?? [])
-        if (norm(f.name) === key) { f.fields = fields; f.rules = rules; }
+        if (norm(f.name) === key) { f.fields = fields; f.rules = rules; if (repeatable !== undefined) f.repeatable = repeatable; }
     done += 1;
     onProgress({ phase: `Building fields (${done}/${total} forms)`, progress: 15 + Math.round(55 * done / total), tree: liveTree(skeleton.visits) });
   });
@@ -126,7 +190,14 @@ export async function buildStudyFromDocuments(
   if ((eligibility?.length ?? 0) >= (skeleton.eligibility?.length ?? 0)) skeleton.eligibility = eligibility;
 
   // Normalize the Study-Visit arm (drops forms that failed enrichment).
-  const base = normalizeStudy(skeleton, documents);
+  let base = normalizeStudy(skeleton, documents);
+
+  // Deterministic cleanup BEFORE arm replication so every arm inherits it:
+  // merge routine labs into one "Lab Assessments" form, and keep Height/Weight/BMI
+  // once (in Vital Signs, with a calculated BMI).
+  base = consolidateLabForms(base);
+  base = dedupeAnthropometry(base);
+  base = markRepeatableForms(base);
 
   // ---- Stage 4: replicate the master forms into the fixed arms. ----
   onProgress({ phase: 'Creating arms & folders', progress: 84 });

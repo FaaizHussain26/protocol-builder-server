@@ -79,6 +79,7 @@ export function normalizeStudy(raw: RawStudy, documents: IngestedDocument[]): St
           description: f.description || undefined,
           appliedTemplate: f.appliedTemplate || null,
           prompt: f.prompt || undefined,
+          repeatable: f.repeatable || undefined,
           fields: normalizeFields(f.fields),
           rules: normalizeRules(f.rules),
         })),

@@ -38,6 +38,23 @@ export function soaDocsOnly(corpus: string): string {
   return soa.length ? soa.join('\n') : corpus;
 }
 
+// The COMPLEMENT of soaDocsOnly: the non-SOA documents (the eCRF / CRF completion
+// guide). Used to discover forms the eCRF defines that the SOA-only skeleton never
+// sees. Returns '' when there is only a single (protocol) document.
+export function ecrfDocsOnly(corpus: string): string {
+  const parts = corpus.split(/\n(?====== DOCUMENT \d+ of \d+:)/);
+  if (parts.length <= 1) return '';
+  const ecrf = parts.filter((p) => !/contains Schedule of Activities/i.test(p.split('\n', 1)[0] ?? ''));
+  return ecrf.join('\n');
+}
+
+// Size-capped input for the eCRF-forms discovery pass.
+export const ECRF_FORMS_MAX_CHARS = 120000;
+export function ecrfFormsInput(corpus: string): string {
+  const doc = ecrfDocsOnly(corpus);
+  return doc.length <= ECRF_FORMS_MAX_CHARS ? doc : doc.slice(0, ECRF_FORMS_MAX_CHARS);
+}
+
 // Assemble a focused, size-capped skeleton input: synopsis (start), the SOA
 // table, and eligibility criteria, located by anchor (the SOA can sit past a
 // naive truncation point). Falls back to the whole doc when it already fits.
@@ -76,8 +93,9 @@ export function skeletonInput(corpus: string): string {
   return out.slice(0, SKELETON_MAX_CHARS);
 }
 
-// Eligibility-focused input cap (~15k tokens) for the dedicated eligibility pass.
-export const ELIGIBILITY_MAX_CHARS = 60000;
+// Eligibility-focused input cap (~30k tokens) for the dedicated eligibility pass.
+// Generous so a long inclusion/exclusion list is never truncated mid-criteria.
+export const ELIGIBILITY_MAX_CHARS = 120000;
 
 // Assemble a focused input around the Inclusion/Exclusion criteria for the
 // dedicated eligibility extraction. Windows the criteria regions (they can be
@@ -92,7 +110,7 @@ export function eligibilityInput(corpus: string): string {
     const g = new RegExp(re.source, 'gi');
     let m: RegExpExecArray | null;
     while ((m = g.exec(doc)) && windows.length < 8) {
-      windows.push([Math.max(0, m.index - 500), Math.min(doc.length, m.index + 22000)]);
+      windows.push([Math.max(0, m.index - 500), Math.min(doc.length, m.index + 40000)]);
     }
   }
   if (!windows.length) return doc.slice(0, ELIGIBILITY_MAX_CHARS);

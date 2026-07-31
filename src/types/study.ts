@@ -94,6 +94,8 @@ export interface StudyForm {
   appliedTemplate?: string | null;
   /** Per-form prompt used to (re)generate this form during review. */
   prompt?: string;
+  /** Repeatable log/table — the site can add multiple records (rows) at data entry. */
+  repeatable?: boolean;
   fields: StudyField[];
   rules: ValidationRule[];
   /** Alerts/notifications configured on this form (Phase 2). */
