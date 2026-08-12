@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { validateBody } from '../middleware/validate';
 import { asyncHandler } from '../middleware/asyncHandler';
-import { buildStudy, getBuildStatus, regenerateForm } from '../controllers/build.controller';
+import { buildStudy, getBuildStatus, regenerateForm, reviewStudy } from '../controllers/build.controller';
 
 const buildSchema = z.object({
   protocolText: z.string().min(1, 'protocolText is required'),
@@ -21,8 +21,18 @@ const regenerateSchema = z.object({
   options: z.any().optional(),
 });
 
+// The follow-up "form testing" pass. Normally carries just the completed build's
+// job id (its study + corpus are still in memory); study/protocolText are the
+// fallback when that job has expired.
+const reviewSchema = z.object({
+  buildJobId: z.string().optional(),
+  study: z.any().optional(),
+  protocolText: z.string().optional(),
+});
+
 export const buildRouter = Router();
 
 buildRouter.post('/', validateBody(buildSchema), asyncHandler(buildStudy));
 buildRouter.get('/status/:jobId', asyncHandler(getBuildStatus));
 buildRouter.post('/regenerate', validateBody(regenerateSchema), asyncHandler(regenerateForm));
+buildRouter.post('/review', validateBody(reviewSchema), asyncHandler(reviewStudy));

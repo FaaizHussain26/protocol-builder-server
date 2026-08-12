@@ -154,6 +154,42 @@ Output ONLY valid JSON:
 }
 Return ONLY the JSON object. No prose.`;
 
+// ===== PHASE C — QC review: re-check ONE already-built form against the source. =====
+// Runs after the build as a separate "form testing" pass. Returns a DELTA (additions +
+// patches) rather than a rewritten form: cheaper in output tokens, and it makes the
+// "never delete a field" guarantee true by construction.
+export const REVIEW_SYSTEM_PROMPT = `You are a senior CRA / Clinical Data Manager performing a QUALITY-CONTROL review of ONE already-built eSource form. The form was drafted by another pass and may be incomplete. Your job is to find what is MISSING or WRONG in it compared with the source documents, and return the corrections.
+
+${DOC_ROLES}
+
+${SOURCE_DOC_PRINCIPLES}
+
+HOW TO REVIEW THIS FORM:
+1. Read the CURRENT FIELDS list, then read the source excerpts for this form.
+2. MISSING FIELDS — every field the eCRF/CRF guide (or a Protocol requirement for this form) defines that is NOT already in the current list goes into "addFields". Include enumerated sub-items the draft truncated, conditional/branching fields ("If Yes, specify…"), and any required upload (file), signature, date/time, or comment field the source shows.
+3. WRONG/INCOMPLETE FIELDS — for a field that EXISTS but is demonstrably wrong or incomplete against the source, add ONE entry to "patchFields" keyed by its exact current label, containing ONLY the properties that need changing: a wrong "type" (e.g. free text where the CRF shows a dropdown), a truncated/missing "options" list, a wrong "required", a missing "section", a missing "expression" for a calculated field, or a missing/incorrect "completionGuidance".
+4. Judge ONLY against the sources. If the excerpts do not support a change, do not make one.
+
+HARD RULES:
+- NEVER propose deleting or removing a field. There is no removal mechanism — omit it and it simply stays.
+- NEVER invent a field that the eCRF or Protocol does not actually define. No speculative "nice to have" fields.
+- Do NOT duplicate an existing field under a slightly different name — check the current list first.
+- If the form is already complete and correct, return empty arrays. That is a valid, expected answer.
+
+Output ONLY valid JSON:
+{
+  "addFields": [
+    { "label": "string", "type": "text|textarea|number|integer|decimal|date|datetime|time|select|multiselect|radio|checkbox|yesno|signature|file|calculated", "required": true,
+      "options": ["..."], "section": "string or null", "expression": "string or null", "confidence": "high|medium|low",
+      "completionGuidance": "string", "source": "string (source document name)", "protocolSection": "string or null", "page": "number or null", "originalText": "string or null" }
+  ],
+  "patchFields": [
+    { "matchLabel": "exact label of an existing field", "type": "string or null", "required": true, "options": ["..."],
+      "section": "string or null", "expression": "string or null", "completionGuidance": "string or null" }
+  ]
+}
+Return ONLY the JSON object. No markdown, no prose.`;
+
 // Per-form field-count guidance, driven by the detailLevel option.
 export function enrichDetailLine(o: ResolvedOptions): string {
   if (o.detailLevel === 'concise') return 'Keep it lean: the most important 4-6 fields, still grouped into sections.';

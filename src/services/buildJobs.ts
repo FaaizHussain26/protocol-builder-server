@@ -30,6 +30,9 @@ export interface BuildJob {
   progress?: number;
   /** Lightweight live tree snapshot (arms → folders → form names + field counts). */
   partial?: unknown;
+  /** Source corpus this job was built from — lets the follow-up review pass reuse
+   *  it (and the finished study) without the client re-uploading either. */
+  protocolText?: string;
 }
 
 const jobs = new Map<string, BuildJob>();
@@ -56,8 +59,9 @@ export function getJob(id: string): BuildJob | undefined {
   return jobs.get(id);
 }
 
-// Merge live progress onto a pending job (phase/progress/partial).
-export function updateJob(id: string, patch: Partial<Pick<BuildJob, 'phase' | 'progress' | 'partial'>>): void {
+// Merge live progress onto a pending job (phase/progress/partial), or stash the
+// source corpus so a follow-up review job can reuse it.
+export function updateJob(id: string, patch: Partial<Pick<BuildJob, 'phase' | 'progress' | 'partial' | 'protocolText'>>): void {
   const job = jobs.get(id);
   if (!job) return;
   Object.assign(job, patch);

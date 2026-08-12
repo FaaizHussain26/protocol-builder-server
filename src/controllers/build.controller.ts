@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import { buildStudyFromDocuments, regenerateFormContent } from '../services/pipeline/buildPipeline';
+import { reviewStudyForms } from '../services/pipeline/reviewPass';
 import { applyTemplate } from '../services/pipeline/templateApply';
 import { applyScreeningOrder, addGeneralSections } from '../services/pipeline/generalSections';
 import { retrieveSimilar, buildMemoryContext } from '../services/memory.service';
@@ -7,7 +8,7 @@ import { loadLearnedPreferences } from '../services/editMemory.service';
 import { buildQuestionsContext } from '../services/pipeline/questionsContext';
 import { createJob, getJob, completeJob, completeJobResult, failJob, updateJob } from '../services/buildJobs';
 import { HttpError } from '../middleware/errorHandler';
-import type { TemplatePreferences, IngestedDocument } from '../types/study';
+import type { TemplatePreferences, IngestedDocument, StudyModel } from '../types/study';
 
 interface BuildRequestBody {
   protocolText: string;
@@ -22,6 +23,10 @@ async function runBuild(jobId: string, body: BuildRequestBody): Promise<void> {
   try {
     const { protocolText, documents, options, templatePreferences } = body;
     const prefs = templatePreferences;
+
+    // Stash the corpus on the job so the follow-up "form testing" review can reuse
+    // it (and the finished study) without the client re-uploading either.
+    updateJob(jobId, { protocolText: String(protocolText ?? '') });
 
     // A template's free-text instructions + selected Plan-Mode questions flow
     // straight into the build prompt, merged with any per-build custom instructions.
@@ -74,6 +79,45 @@ export async function getBuildStatus(req: Request, res: Response): Promise<void>
   const job = getJob(String(req.params.jobId));
   if (!job) throw new HttpError(404, 'Job not found (it may have expired). Please try again.');
   res.json({ status: job.status, study: job.study, result: job.result, memoryUsed: job.memoryUsed, error: job.error, phase: job.phase, progress: job.progress, partial: job.partial });
+}
+
+interface ReviewRequestBody {
+  /** Completed build job to review — its study + corpus are reused from memory. */
+  buildJobId?: string;
+  /** Fallback when the build job has expired (or for an already-saved study). */
+  study?: StudyModel;
+  protocolText?: string;
+}
+
+// "Form testing" pass — a second AI review of every generated form against the
+// eCRF/Protocol. Runs as its own background job (one call per unique form, so it
+// far outlasts a proxy timeout) and is BEST-EFFORT: any failure completes the job
+// with the study exactly as built, so a QA hiccup can never lose a build.
+async function runReview(jobId: string, body: ReviewRequestBody): Promise<void> {
+  let study: StudyModel | undefined;
+  try {
+    const source = body.buildJobId ? getJob(body.buildJobId) : undefined;
+    study = body.study ?? source?.study;
+    const corpus = body.protocolText ?? source?.protocolText ?? '';
+    if (!study) throw new HttpError(404, 'Build not found (it may have expired). Please rebuild.');
+
+    updateJob(jobId, { phase: 'Testing the forms', progress: 1 });
+    const learned = await loadLearnedPreferences();
+    const reviewed = await reviewStudyForms(study, corpus, learned,
+      (u) => updateJob(jobId, { phase: u.phase, progress: u.progress }));
+
+    completeJob(jobId, reviewed, 0);
+  } catch (err) {
+    // Never fail the user's build over the QA pass — hand back what we have.
+    if (study) completeJob(jobId, study, 0);
+    else failJob(jobId, err instanceof Error ? err.message : 'Review failed.');
+  }
+}
+
+export async function reviewStudy(req: Request, res: Response): Promise<void> {
+  const job = createJob();
+  void runReview(job.id, req.body as ReviewRequestBody);
+  res.status(202).json({ jobId: job.id });
 }
 
 // Regenerating a form makes a full enrichment call, which can outlast a hosting
