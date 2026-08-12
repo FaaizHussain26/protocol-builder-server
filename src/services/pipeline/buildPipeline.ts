@@ -134,7 +134,9 @@ export async function buildStudyFromDocuments(
     SKELETON_SYSTEM_PROMPT + universalSkeletonRules() + customLine + memoryContext,
     `Extract the study structure — the COMPLETE visit/log schedule from the SOA, plus the form names collected at each visit — from the following source document(s):\n\n${skeletonInput(corpus)}`,
   )) as RawStudy;
-  for (const v of skeleton.visits ?? []) v.arm = 'Study Visit';
+  // Continuous logs (Adverse Events, Concomitant Medications, …) aren't tied to an
+  // SOA column, so they belong in the General arm — only true visits are Study Visit.
+  for (const v of skeleton.visits ?? []) v.arm = v.kind === 'log' ? 'General' : 'Study Visit';
 
   // Merge in forms the eCRF defines that the SOA-only skeleton missed.
   const added = mergeEcrfForms(skeleton, await ecrfP);
@@ -203,7 +205,7 @@ export async function buildStudyFromDocuments(
   // ---- Stage 4: replicate the master forms into the fixed arms. ----
   onProgress({ phase: 'Creating arms & folders', progress: 84 });
   const master = masterForms(base.visits);
-  base.visits = [...base.visits, ...eosFolders(master, 'Study Visit'), ...scaffoldFixedArms(master)];
+  base.visits = [...base.visits, ...eosFolders(master, 'Study Visit'), ...scaffoldFixedArms(master, base.visits)];
   onProgress({ phase: 'Arms created', progress: 92, tree: liveTree(base.visits) });
 
   return base;

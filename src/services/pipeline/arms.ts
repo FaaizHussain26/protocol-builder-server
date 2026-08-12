@@ -69,13 +69,16 @@ export function eosFolders(master: StudyForm[], arm: StudyArm): StudyVisit[] {
 // Build the fixed arms (General, Unscheduled, SAE, Early Termination, Reconsent)
 // with their folders and replicated master forms. Returns visits to append to
 // the study alongside the protocol's Study-Visit arm.
-export function scaffoldFixedArms(master: StudyForm[]): StudyVisit[] {
+export function scaffoldFixedArms(master: StudyForm[], existing: StudyVisit[] = []): StudyVisit[] {
   const all = () => master.map((f) => cloneForm(f));
   const out: StudyVisit[] = [];
 
-  // General arm — Note to File + Dosing Log folders.
-  out.push(folder('Note to File', 'General', [stubForm('Note to File')], 'log'));
-  out.push(folder('Dosing Log', 'General', [stubForm('Dosing Log')], 'log'));
+  // General arm — the protocol's own continuous logs already live here (they are
+  // tagged arm 'General' during the build), so only ADD the two standard folders
+  // that the study didn't already produce.
+  const taken = new Set(existing.map((v) => v.name.trim().toLowerCase()));
+  for (const name of ['Note to File', 'Dosing Log'])
+    if (!taken.has(name.toLowerCase())) out.push(folder(name, 'General', [stubForm(name)], 'log'));
 
   // Unscheduled Visit arm — N folders, each all master forms.
   for (let i = 1; i <= ARM_COUNTS.unscheduled; i++) out.push(folder(`Unscheduled Visit ${i}`, 'Unscheduled Visit', all()));

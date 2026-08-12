@@ -80,6 +80,6 @@ export function addGeneralSections(study: StudyModel): StudyModel {
   ).map(stubForm);
   if (!missing.length) return study;
 
-  const genVisit: StudyVisit = { id: 'general-sections', name: 'General Sections', kind: 'log', forms: missing };
+  const genVisit: StudyVisit = { id: 'general-sections', name: 'General Sections', kind: 'log', arm: 'General', forms: missing };
   return { ...study, visits: [...study.visits, genVisit] };
 }
