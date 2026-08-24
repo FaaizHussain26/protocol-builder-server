@@ -268,6 +268,8 @@ export interface StudyModel {
   visits: StudyVisit[];
   eligibility: EligibilityCriterion[];
   findings: IntelligenceFinding[];
+  /** When the eSource was first saved (ISO) — set by the server, read-only. */
+  createdAt?: string;
   /** Applied template id and date-format preference. Phase 2. */
   templateId?: string;
   dateFormatPreference?: string;
