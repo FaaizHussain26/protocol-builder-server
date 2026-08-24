@@ -17,6 +17,7 @@ interface StudySummary {
   protocolNumber?: string;
   phase?: string;
   status: string;
+  createdAt: string;
   updatedAt: string;
   visitCount: number;
   fieldCount: number;
@@ -57,7 +58,7 @@ export async function listStudies(): Promise<StudySummary[]> {
   ensureDb();
   // Project summary fields only — never the (potentially huge) visits tree.
   // Active studies only ({deletedAt: null} also matches docs with no such field).
-  const docs = await StudyDoc.find({ deletedAt: null }, { studyTitle: 1, protocolNumber: 1, phase: 1, status: 1, visitCount: 1, fieldCount: 1, approvedFieldCount: 1, updatedAt: 1 })
+  const docs = await StudyDoc.find({ deletedAt: null }, { studyTitle: 1, protocolNumber: 1, phase: 1, status: 1, visitCount: 1, fieldCount: 1, approvedFieldCount: 1, updatedAt: 1, createdAt: 1 })
     .sort({ updatedAt: -1 })
     .lean();
   return docs.map(toSummary);
@@ -66,7 +67,7 @@ export async function listStudies(): Promise<StudySummary[]> {
 // Trashed (soft-deleted) studies, most-recently-deleted first.
 export async function listTrash(): Promise<StudySummary[]> {
   ensureDb();
-  const docs = await StudyDoc.find({ deletedAt: { $ne: null } }, { studyTitle: 1, protocolNumber: 1, phase: 1, status: 1, visitCount: 1, fieldCount: 1, approvedFieldCount: 1, updatedAt: 1, deletedAt: 1 })
+  const docs = await StudyDoc.find({ deletedAt: { $ne: null } }, { studyTitle: 1, protocolNumber: 1, phase: 1, status: 1, visitCount: 1, fieldCount: 1, approvedFieldCount: 1, updatedAt: 1, createdAt: 1, deletedAt: 1 })
     .sort({ deletedAt: -1 })
     .lean();
   return docs.map(toSummary);
@@ -80,6 +81,7 @@ function toSummary(d: any): StudySummary {
     phase: d.phase,
     status: d.status ?? 'draft',
     updatedAt: (d.updatedAt instanceof Date ? d.updatedAt : new Date(d.updatedAt)).toISOString(),
+    createdAt: (d.createdAt ? (d.createdAt instanceof Date ? d.createdAt : new Date(d.createdAt)) : (d.updatedAt instanceof Date ? d.updatedAt : new Date(d.updatedAt))).toISOString(),
     visitCount: d.visitCount ?? 0,
     fieldCount: d.fieldCount ?? 0,
     approvedFieldCount: d.approvedFieldCount ?? 0,
