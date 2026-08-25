@@ -29,7 +29,7 @@ ${DOC_ROLES}
 ${SOURCE_DOC_PRINCIPLES}
 
 WORKFLOW:
-1. Identify the PRIMARY protocol (the one with the SOA). Extract study title, protocol number, phase, indication, sponsor, objectives, and inclusion/exclusion criteria.
+1. Identify the PRIMARY protocol (the one with the SOA). Extract study title, protocol number, phase, indication, sponsor, and objectives. Do NOT extract eligibility/inclusion/exclusion criteria — a separate protocol-only pass owns those.
 2. Locate the SOA table ("Schedule of Activities/Assessments/Procedures/Events", or a numbered table such as "Table 3"). Its column headers ARE the visits — read them directly off the table; never infer from prose or from a "typical" trial.
    - The SOA is extracted from a PDF, so its grid is flattened and may look scrambled: a multi-row header where visit labels are split across lines (e.g. a "Visit" row "1 2 3 3 4 4 4 4 5 6 ..." with sub-labels "a b a b c d ..." beneath, forming 1, 2, 3a, 3b, 4a, 4b, 4c, 4d, 5, 6, ...), a "Study Day(s)" row giving each visit's day, and "Study Phase" groupings (Screening, Baseline, Treatment, Follow-up). Reconstruct the FULL ordered visit list, pairing each label with its study day. Treat sub-visits (3a/3b) as DISTINCT visits. Do NOT collapse into broad phases.
    - READ THE FOOTNOTES beneath and around the SOA table (markers like a, b, c, *, †, or "Note:"). These footnotes carry essential detail about HOW each procedure/form is to be collected and designed — carry them forward conceptually (they will drive field design and rules in the next step).
@@ -46,7 +46,7 @@ WORKFLOW:
    - Give each protocol-specified extra assessment its own form (Neurological Exam, ECHO/MUGA, Ophthalmology, Pulmonary Function Test, ICE score, Bone Marrow, central-lab assessments).
    - Subsequent (treatment) visits mirror the Screening structure and ADD a "Study Drug Administration" form.
 
-Output ONLY valid JSON (NO fields and NO rules in this step):
+Output ONLY valid JSON (NO fields, NO rules, and NO eligibility in this step):
 {
   "studyTitle": "string",
   "studyDescription": "string (1-2 sentences)",
@@ -59,7 +59,6 @@ Output ONLY valid JSON (NO fields and NO rules in this step):
     { "id": "v1", "name": "string (exact SOA label)", "kind": "visit | log", "timing": "string or null", "window": "string or null",
       "forms": [ { "name": "string", "description": "string or null", "appliedTemplate": "Adverse Event Log | Concomitant Medication Log | Vital Signs | Medical History | null" } ] }
   ],
-  "eligibility": [ { "id": "e1", "kind": "inclusion | exclusion", "criterion": "original text", "logic": "pass/fail logic", "confidence": "high|medium|low" } ],
   "findings": [ { "id": "fnd1", "title": "string", "description": "string", "source": "string", "confidence": "high|medium|low", "severity": "info|warning|blocker", "suggestedAction": "review | block" } ]
 }
 
@@ -67,7 +66,7 @@ Rules:
 - The "visits" array MUST contain one entry per SOA visit COLUMN (kind "visit"), in left-to-right (chronological) order, with the exact labels — do not sample, summarize, reorder, rename, or cap to a round number. This is the single most important requirement of this step.
 - Every visit MUST list at least one form name. Forms have NO fields in this step.
 - If NO SOA table exists in ANY document, infer a best-effort schedule (Screening, Baseline, Day 1, Week 1, Week 2, … plus follow-up) and add a "blocker" finding stating no SOA was found.
-- Convert inclusion/exclusion criteria into eligibility items. Produce 3-6 findings, at least one "blocker".
+- Produce 3-6 findings, at least one "blocker". Do NOT emit an "eligibility" key at all.
 - Return ONLY the JSON object. No markdown, no prose.`;
 
 // ===== Dedicated eligibility extraction — protocol-only, template-independent. =====

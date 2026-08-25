@@ -189,8 +189,11 @@ export async function buildStudyFromDocuments(
 
   // ---- Stage 3: eligibility (already running; surface it as its own phase). ----
   onProgress({ phase: 'Extracting eligibility (I/E) criteria', progress: 74, tree: liveTree(skeleton.visits) });
-  const eligibility = await eligP;
-  if ((eligibility?.length ?? 0) >= (skeleton.eligibility?.length ?? 0)) skeleton.eligibility = eligibility;
+  // The dedicated protocol-only pass is the SOLE source of eligibility. The
+  // skeleton call carries template instructions, Plan-Mode questions and prior-build
+  // memory, so anything it produced could be criteria from ANOTHER study — never
+  // fall back to it, even when this pass returns nothing.
+  skeleton.eligibility = await eligP;
 
   // Normalize the Study-Visit arm (drops forms that failed enrichment).
   let base = normalizeStudy(skeleton, documents);
