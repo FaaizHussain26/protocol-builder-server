@@ -93,9 +93,15 @@ export function skeletonInput(corpus: string): string {
   return out.slice(0, SKELETON_MAX_CHARS);
 }
 
-// Eligibility-focused input cap (~30k tokens) for the dedicated eligibility pass.
-// Generous so a long inclusion/exclusion list is never truncated mid-criteria.
-export const ELIGIBILITY_MAX_CHARS = 120000;
+// Eligibility-focused input cap (~15k tokens) for the dedicated eligibility pass.
+// The window now ENDS at the section following the criteria (see ELIGIBILITY_END),
+// so a long I/E list is captured whole without dragging in the rest of the protocol.
+export const ELIGIBILITY_MAX_CHARS = 60000;
+// Hard ceiling per criteria region, used when no end-of-section marker is found.
+const ELIGIBILITY_WINDOW = 30000;
+// The heading that typically FOLLOWS the inclusion/exclusion criteria. Matching it
+// lets the window stop at the end of the criteria rather than a fixed char count.
+const ELIGIBILITY_END = /\n\s*(?:\d+(?:\.\d+)*\.?\s+)?(?:study (?:design|treatment|intervention|procedures|assessments)|screen(?:ing)? failure|rescreen|randomi[sz]ation|discontinuation|withdrawal|statistical|schedule of (?:activities|assessments|events|procedures)|(?:prior and )?concomitant (?:medication|therap)|adverse events?|informed consent|end of study|lifestyle (?:considerations|restrictions))\b/i;
 
 // Assemble a focused input around the Inclusion/Exclusion criteria for the
 // dedicated eligibility extraction. Windows the criteria regions (they can be
@@ -110,7 +116,12 @@ export function eligibilityInput(corpus: string): string {
     const g = new RegExp(re.source, 'gi');
     let m: RegExpExecArray | null;
     while ((m = g.exec(doc)) && windows.length < 8) {
-      windows.push([Math.max(0, m.index - 500), Math.min(doc.length, m.index + 40000)]);
+      const start = Math.max(0, m.index - 500);
+      // End at the next major section heading after the criteria, else the ceiling.
+      const ceiling = Math.min(doc.length, m.index + ELIGIBILITY_WINDOW);
+      const tail = doc.slice(m.index + 1000, ceiling);
+      const end = ELIGIBILITY_END.exec(tail);
+      windows.push([start, end ? m.index + 1000 + end.index : ceiling]);
     }
   }
   if (!windows.length) return doc.slice(0, ELIGIBILITY_MAX_CHARS);

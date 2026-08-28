@@ -108,6 +108,33 @@ function applyDelta(form: StudyForm, delta: ReviewDelta): StudyForm {
   return fields === form.fields ? form : { ...form, fields };
 }
 
+// Deterministic pre-screen: which forms are worth a QA call.
+//
+// Re-reading a form's source excerpt costs ~4k tokens, and enrichment already spent
+// that once — so re-checking EVERY form doubles the build's token bill and pushes
+// against the deployment's tokens-per-minute quota. Only forms that actually look
+// thin or malformed get a second look.
+const VERBATIM_SOURCE = /eligibility criteria \(verbatim\)/i;
+const STUB_SOURCE = /standard (section|arm section)/i;
+// Form types whose source-document design REQUIRES an upload and/or a sign-off.
+const NEEDS_UPLOAD = /lab|ecg|electrocardiogram|imaging|scan|consent|progress note/i;
+const NEEDS_SIGNATURE = /consent|ecg|ecog|physical exam|disposition|visit completion/i;
+
+export function needsReview(form: StudyForm): { review: boolean; why: string } {
+  const n = form.fields.length;
+  // The eligibility form is built verbatim from the protocol — never let the AI
+  // paraphrase, renumber, or "improve" those criteria.
+  if (form.fields.some((f) => VERBATIM_SOURCE.test(f.source ?? ''))) return { review: false, why: 'verbatim (protected)' };
+  if (n === 0) return { review: true, why: 'empty' };
+  if (form.fields.every((f) => STUB_SOURCE.test(f.source ?? ''))) return { review: true, why: 'stub' };
+  if (n <= 5) return { review: true, why: `thin (${n} fields)` };
+  if (n > 8 && form.fields.every((f) => !f.section?.trim())) return { review: true, why: 'no sections' };
+  if (form.fields.some((f) => f.confidence === 'low')) return { review: true, why: 'low-confidence field' };
+  if (NEEDS_UPLOAD.test(form.name) && !form.fields.some((f) => f.type === 'file')) return { review: true, why: 'missing upload' };
+  if (NEEDS_SIGNATURE.test(form.name) && !form.fields.some((f) => f.type === 'signature')) return { review: true, why: 'missing signature' };
+  return { review: false, why: 'looks complete' };
+}
+
 // Review every UNIQUE form once (a master form replicated across the Unscheduled /
 // SAE / ET / EOS arms costs a single call) and apply each delta to every copy.
 export async function reviewStudyForms(
@@ -126,13 +153,15 @@ export async function reviewStudyForms(
       if (key && (!prev || f.fields.length > prev.fields.length)) unique.set(key, f);
     }
 
-  const total = unique.size;
+  // Only send the forms that actually look incomplete.
+  const selected = [...unique.entries()].filter(([, form]) => needsReview(form).review);
+  const total = selected.length;
   if (!total) return study;
 
   const deltas = new Map<string, ReviewDelta>();
   let done = 0;
   onProgress({ phase: `Testing forms (0/${total})`, progress: 2 });
-  await mapPool([...unique.entries()], ENRICH_CONCURRENCY, async ([key, form]) => {
+  await mapPool(selected, ENRICH_CONCURRENCY, async ([key, form]) => {
     const delta = await reviewOneForm(form, corpus, study.studyTitle, learned);
     if ((delta.addFields?.length ?? 0) || (delta.patchFields?.length ?? 0)) deltas.set(key, delta);
     done += 1;
