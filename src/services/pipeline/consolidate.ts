@@ -74,6 +74,71 @@ export function markRepeatableForms(study: StudyModel): StudyModel {
   return { ...study, visits: study.visits.map((v) => ({ ...v, forms: v.forms.map(mark) })) };
 }
 
+// The Eligibility Determination form is built DETERMINISTICALLY from the verbatim
+// criteria the protocol-only pass extracted — one Yes/No/N-A field per criterion,
+// exact protocol wording and numbering preserved, never combined. Letting the
+// enrichment call re-derive these from an excerpt risks paraphrasing, renumbering,
+// or dropping criteria; study.eligibility is already the untouched source text.
+const ELIGIBILITY_FORM = /eligibility|inclusion|exclusion/i;
+// Administrative fields the AI may have added are worth keeping (sign-off, date).
+const ADMIN_FIELD = /signature|sign-?off|date|comment|complet|initial|investigator|assessor|reviewed/i;
+
+export function populateEligibilityForm(study: StudyModel): StudyModel {
+  const criteria = study.eligibility ?? [];
+  if (!criteria.length) return study; // nothing verbatim to copy — leave as built
+
+  const ordered = [
+    ...criteria.filter((c) => c.kind === 'inclusion'),
+    ...criteria.filter((c) => c.kind !== 'inclusion'),
+  ];
+
+  const buildFields = (existing: StudyField[]): StudyField[] => {
+    const fields: StudyField[] = ordered.map((c) => ({
+      id: uid('fld'),
+      // The label IS the protocol's own text, copied over unchanged.
+      label: c.criterion,
+      type: 'radio',
+      options: ['Yes', 'No', 'N/A'],
+      required: true,
+      section: c.kind === 'inclusion' ? 'Inclusion Criteria' : 'Exclusion Criteria',
+      confidence: c.confidence ?? 'high',
+      completionGuidance: c.logic || 'Record whether the subject meets this criterion.',
+      source: 'Protocol - eligibility criteria (verbatim)',
+      reviewStatus: 'pending',
+    }));
+    // Preserve any sign-off/date/comment fields the build produced.
+    const seen = new Set(fields.map((f) => norm(f.label)));
+    for (const f of existing) {
+      if (!ADMIN_FIELD.test(f.label)) continue;      // drop AI-paraphrased criteria
+      if (seen.has(norm(f.label))) continue;
+      seen.add(norm(f.label));
+      fields.push({ ...f, id: uid('fld') });
+    }
+    return fields;
+  };
+
+  let replaced = false;
+  const visits = study.visits.map((v) => ({
+    ...v,
+    forms: v.forms.map((f) => {
+      if (!ELIGIBILITY_FORM.test(f.name)) return f;
+      replaced = true;
+      return { ...f, fields: buildFields(f.fields) };
+    }),
+  }));
+
+  // No such form anywhere: add one to Screening (else the first visit).
+  if (!replaced && visits.length) {
+    const i = Math.max(0, visits.findIndex((v) => /screen/i.test(v.name)));
+    const form: StudyForm = {
+      id: uid('form'), name: 'Eligibility Determination', appliedTemplate: null,
+      fields: buildFields([]), rules: [],
+    };
+    visits[i] = { ...visits[i], forms: [...visits[i].forms, form] };
+  }
+  return { ...study, visits };
+}
+
 const HEIGHT = /\bheight\b/i;
 const WEIGHT = /\bweight\b/i;
 const BMI = /\bbmi\b|body mass index/i;

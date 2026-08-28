@@ -6,7 +6,7 @@ import { skeletonInput, eligibilityInput, ecrfFormsInput, excerptFor, mapPool, n
 import { normalizeStudy, normalizeFields, normalizeRules, type RawStudy, type RawForm, type RawVisit } from './normalize';
 import { universalRulesFor, universalSkeletonRules } from './universalRules';
 import { masterForms, scaffoldFixedArms, eosFolders } from './arms';
-import { consolidateLabForms, consolidateAnthropometry, markRepeatableForms } from './consolidate';
+import { consolidateLabForms, consolidateAnthropometry, markRepeatableForms, populateEligibilityForm } from './consolidate';
 import { learnedPrefsContext } from '../editMemory.service';
 
 // A lightweight live view of the study tree, streamed to the UI during a build.
@@ -204,6 +204,7 @@ export async function buildStudyFromDocuments(
   base = consolidateLabForms(base);
   base = consolidateAnthropometry(base);
   base = markRepeatableForms(base);
+  base = populateEligibilityForm(base);
 
   // ---- Stage 4: replicate the master forms into the fixed arms. ----
   onProgress({ phase: 'Creating arms & folders', progress: 84 });
