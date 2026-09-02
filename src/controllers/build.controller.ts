@@ -53,13 +53,13 @@ async function runBuild(jobId: string, body: BuildRequestBody): Promise<void> {
     let study = await buildStudyFromDocuments(protocolText, documents ?? [], opts, memoryContext, learned,
       (u) => updateJob(jobId, { phase: u.phase, progress: u.progress, partial: u.tree ?? undefined }));
 
-    // Finalize: template preferences, Screening ordering, General Sections.
+    // Finalize. Screening ordering and General Sections are no longer user-facing
+    // toggles (Plan Mode asks only the five questions in the design) — both are
+    // prescribed by the source-document methodology, so they always run.
     updateJob(jobId, { phase: 'Finalizing', progress: 96 });
-    if (prefs) {
-      study = applyTemplate(study, prefs);
-      if (prefs.screeningOrder) study = applyScreeningOrder(study);
-      if (prefs.generalSections) study = addGeneralSections(study);
-    }
+    if (prefs) study = applyTemplate(study, prefs);
+    study = applyScreeningOrder(study);
+    study = addGeneralSections(study);
 
     completeJob(jobId, study, memory.length);
   } catch (err) {
