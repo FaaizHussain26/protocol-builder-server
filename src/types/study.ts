@@ -36,6 +36,8 @@ export interface StudyField {
   expression?: string;
   /** Optional display format hint (e.g. date order). Phase 2. */
   format?: string;
+  /** Protocol/SOA footnote or extra site note shown under the field. */
+  footnote?: string;
   source?: string;
   protocolSection?: string;
   page?: number;
@@ -127,6 +129,11 @@ export interface TemplatePreferences {
   instructions?: string;
   /** Plan-mode questions selected to feed the build prompt. */
   questions?: TemplateQuestion[];
+  fieldDescriptions?: boolean;
+  fieldDescriptionDetail?: 'high' | 'medium' | 'low';
+  fieldFootnotes?: boolean;
+  fieldFootnoteDetail?: 'high' | 'medium' | 'low';
+  showFieldTypeBadge?: boolean;
 }
 
 export type QuestionAnswerType =
@@ -203,6 +210,11 @@ export const DEFAULT_PREFERENCES: TemplatePreferences = {
   documentUploadFields: true,
   generalSections: true,
   screeningOrder: true,
+  fieldDescriptions: true,
+  fieldDescriptionDetail: 'medium',
+  fieldFootnotes: true,
+  fieldFootnoteDetail: 'medium',
+  showFieldTypeBadge: true,
 };
 
 // A study "arm" — the top-level folder grouping a set of visits belong to.
@@ -273,6 +285,8 @@ export interface StudyModel {
   /** Applied template id and date-format preference. Phase 2. */
   templateId?: string;
   dateFormatPreference?: string;
+  /** Persist the Plan Mode "input-type badge" choice for this study. */
+  showFieldTypeBadge?: boolean;
 }
 
 // ---- Build options (shared with the client) ----

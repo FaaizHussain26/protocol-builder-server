@@ -53,5 +53,5 @@ export function applyTemplate(study: StudyModel, p: TemplatePreferences): StudyM
     }),
   }));
 
-  return { ...study, visits, dateFormatPreference: dateFmt };
+  return { ...study, visits, dateFormatPreference: dateFmt, showFieldTypeBadge: p.showFieldTypeBadge !== false };
 }

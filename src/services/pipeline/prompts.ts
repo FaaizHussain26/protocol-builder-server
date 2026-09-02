@@ -1,4 +1,4 @@
-import type { BuildOptions } from '../../types/study';
+import type { BuildOptions, TemplatePreferences } from '../../types/study';
 
 type ResolvedOptions = Required<Omit<BuildOptions, 'customInstructions' | 'templateId'>> & {
   customInstructions: string;
@@ -121,7 +121,9 @@ For the TARGET FORM:
 - SECTIONS — set the "section" property on every field to group the form into correctly named subsections, in source order (e.g. Physical Examination → body systems; Adverse Events → "Event Details", "Seriousness", "Causality", "Action & Outcome"). Do not leave fields ungrouped when the form has more than ~5 fields.
 - TYPES — choose the best field type (integer/decimal for numerics, datetime for date+time, multiselect for pick-many, signature for sign-offs, file for uploads, calculated with an "expression" for derived values like BMI/Age). Only include "options" for select/multiselect/radio/checkbox.
 - TRACEABILITY — every field includes source (document name), and where determinable protocolSection, page, a short originalText snippet, and a confidence. Include at least one or two "low"/"medium" confidence fields where the source is ambiguous.
-- Give EVERY field a completionGuidance. Provide 1-3 sensible validation rules for the form.
+- Give EVERY field a completionGuidance unless the plan-mode instructions say otherwise. Scale its length to the requested detail (high / medium / low).
+- FOOTNOTES — when plan-mode asks for field footnotes, emit a "footnote" string for fields that have protocol/SOA footnote text or extra site guidance; omit it when there is none. Scale footnote length to the requested detail.
+- Provide 1-3 sensible validation rules for the form.
 - REPEATABLE — set "repeatable": true when this form is a LOG, TABLE, or repeated LOGLINE the site fills with MULTIPLE records/timepoints (e.g. Vital Signs [pre-/post-dose timepoints], Adverse Events, Concomitant Medications, Medical History, Lab Assessments, Study Drug Administration, any "…Log"); set false for a form captured ONCE per visit (Demographics, Physical Measurements, Eligibility, etc.).
 
 Output ONLY valid JSON for THIS one form:
@@ -130,7 +132,7 @@ Output ONLY valid JSON for THIS one form:
   "fields": [
     { "label": "string", "type": "text|textarea|number|integer|decimal|date|datetime|time|select|multiselect|radio|checkbox|yesno|signature|file|calculated", "required": true,
       "options": ["..."], "section": "string or null", "expression": "string or null (only for 'calculated')", "confidence": "high|medium|low",
-      "completionGuidance": "string", "source": "string (source document name)", "protocolSection": "string or null", "page": "number or null", "originalText": "string or null" }
+      "completionGuidance": "string", "footnote": "string or null", "source": "string (source document name)", "protocolSection": "string or null", "page": "number or null", "originalText": "string or null" }
   ],
   "rules": [ { "description": "string", "ruleType": "range|required-if|cross-field|format|date-not-future|within-visit-window", "confidence": "high|medium|low" } ]
 }
@@ -147,7 +149,7 @@ Output ONLY valid JSON:
   "fields": [
     { "label": "string", "type": "text|textarea|number|integer|decimal|date|datetime|time|select|multiselect|radio|checkbox|yesno|signature|file|calculated", "required": true,
       "options": ["..."], "section": "string or null", "expression": "string or null", "confidence": "high|medium|low",
-      "completionGuidance": "string", "source": "string", "protocolSection": "string or null", "page": "number or null", "originalText": "string or null" }
+      "completionGuidance": "string", "footnote": "string or null", "source": "string", "protocolSection": "string or null", "page": "number or null", "originalText": "string or null" }
   ],
   "rules": [ { "description": "string", "ruleType": "range|required-if|cross-field|format|date-not-future|within-visit-window", "confidence": "high|medium|low" } ]
 }
@@ -180,11 +182,11 @@ Output ONLY valid JSON:
   "addFields": [
     { "label": "string", "type": "text|textarea|number|integer|decimal|date|datetime|time|select|multiselect|radio|checkbox|yesno|signature|file|calculated", "required": true,
       "options": ["..."], "section": "string or null", "expression": "string or null", "confidence": "high|medium|low",
-      "completionGuidance": "string", "source": "string (source document name)", "protocolSection": "string or null", "page": "number or null", "originalText": "string or null" }
+      "completionGuidance": "string", "footnote": "string or null", "source": "string (source document name)", "protocolSection": "string or null", "page": "number or null", "originalText": "string or null" }
   ],
   "patchFields": [
     { "matchLabel": "exact label of an existing field", "type": "string or null", "required": true, "options": ["..."],
-      "section": "string or null", "expression": "string or null", "completionGuidance": "string or null" }
+      "section": "string or null", "expression": "string or null", "completionGuidance": "string or null", "footnote": "string or null" }
   ]
 }
 Return ONLY the JSON object. No markdown, no prose.`;
@@ -235,4 +237,34 @@ export function sourceDocFieldGuidance(formName: string): string {
   if (/progress note/.test(n))
     g.push('Progress Notes & Uploads: a general upload (file) placeholder, a free-text progress-notes area, and a "Page completed by" field.');
   return g.length ? `\n\nSOURCE-DOCUMENT DESIGN FOR THIS FORM:\n- ${g.join('\n- ')}` : '';
+}
+
+function detailPhrase(level: 'high' | 'medium' | 'low' | undefined, kind: 'guidance' | 'footnote'): string {
+  const d = level ?? 'medium';
+  if (kind === 'guidance') {
+    if (d === 'high') return 'HIGH detail — 2-4 sentences covering how to measure, units, timing, allowed values, and what to do if the value is missing or out of range';
+    if (d === 'low') return 'LOW detail — a single short clause (how to complete the field)';
+    return 'MEDIUM detail — one or two concise sentences';
+  }
+  if (d === 'high') return 'HIGH detail — a full protocol/SOA footnote restated for the site (1-2 sentences)';
+  if (d === 'low') return 'LOW detail — a short clause or marker reference only';
+  return 'MEDIUM detail — one concise sentence';
+}
+
+// Plan Mode field-description / footnote directives, merged into the build
+// prompt alongside prefs.instructions and selected questions.
+export function planModeFieldDirectives(prefs?: TemplatePreferences): string {
+  if (!prefs) return '';
+  const lines: string[] = [];
+  if (prefs.fieldDescriptions === false) {
+    lines.push('FIELD DESCRIPTIONS: do not emit completionGuidance (leave it empty or omit it).');
+  } else {
+    lines.push(`FIELD DESCRIPTIONS: give EVERY field a completionGuidance at ${detailPhrase(prefs.fieldDescriptionDetail, 'guidance')}.`);
+  }
+  if (prefs.fieldFootnotes === false) {
+    lines.push('FIELD FOOTNOTES: do not emit a footnote on any field.');
+  } else {
+    lines.push(`FIELD FOOTNOTES: emit a "footnote" string on fields that have protocol/SOA footnote text or extra site guidance, at ${detailPhrase(prefs.fieldFootnoteDetail, 'footnote')}. Omit footnote when there is none.`);
+  }
+  return '\nPLAN-MODE FIELD RENDERING:\n' + lines.join('\n');
 }

@@ -6,6 +6,7 @@ import { applyScreeningOrder, addGeneralSections } from '../services/pipeline/ge
 import { retrieveSimilar, buildMemoryContext } from '../services/memory.service';
 import { loadLearnedPreferences } from '../services/editMemory.service';
 import { buildQuestionsContext } from '../services/pipeline/questionsContext';
+import { planModeFieldDirectives } from '../services/pipeline/prompts';
 import { createJob, getJob, completeJob, completeJobResult, failJob, updateJob } from '../services/buildJobs';
 import { HttpError } from '../middleware/errorHandler';
 import type { TemplatePreferences, IngestedDocument, StudyModel } from '../types/study';
@@ -34,6 +35,7 @@ async function runBuild(jobId: string, body: BuildRequestBody): Promise<void> {
     const extra = [
       prefs?.instructions && String(prefs.instructions).trim(),
       buildQuestionsContext(prefs?.questions),
+      planModeFieldDirectives(prefs),
     ].filter(Boolean).join('\n');
     if (extra) {
       opts.customInstructions = [opts.customInstructions, extra].filter(Boolean).join('\n');

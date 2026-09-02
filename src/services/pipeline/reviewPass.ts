@@ -21,6 +21,7 @@ interface FieldPatch {
   section?: string | null;
   expression?: string | null;
   completionGuidance?: string | null;
+  footnote?: string | null;
 }
 export interface ReviewDelta {
   addFields?: RawForm['fields'];
@@ -93,6 +94,7 @@ function applyDelta(form: StudyForm, delta: ReviewDelta): StudyForm {
     if (p.section?.trim()) next.section = p.section.trim();
     if (p.expression?.trim()) next.expression = p.expression.trim();
     if (p.completionGuidance?.trim()) next.completionGuidance = p.completionGuidance.trim();
+    if (p.footnote?.trim()) next.footnote = p.footnote.trim();
     return next;
   });
 

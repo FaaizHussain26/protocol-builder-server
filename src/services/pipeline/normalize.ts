@@ -43,6 +43,7 @@ export function normalizeFields(raw: RawForm['fields']): StudyField[] {
     format: fld.format || undefined,
     confidence: fld.confidence || 'medium',
     completionGuidance: fld.completionGuidance,
+    footnote: fld.footnote || undefined,
     source: fld.source,
     protocolSection: fld.protocolSection || undefined,
     page: typeof fld.page === 'number' ? fld.page : undefined,
