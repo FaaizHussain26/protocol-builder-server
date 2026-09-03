@@ -292,6 +292,62 @@ export interface StudyModel {
   showFieldTypeBadge?: boolean;
 }
 
+// ---- Data capture (Phase 2): real subject data entered against a study's forms ----
+
+export type SubjectStatus = 'enrolled' | 'screen-failed' | 'completed' | 'withdrawn';
+
+export interface Subject {
+  id: string;
+  studyId: string;
+  subjectCode: string;
+  status: SubjectStatus;
+  enrolledAt: string;
+  createdBy?: { id: string; name: string };
+  /** Present when fetched via getSubject — that subject's visit instances. */
+  visits?: VisitInstance[];
+}
+
+export type VisitInstanceStatus = 'scheduled' | 'completed' | 'missed';
+
+export interface VisitInstance {
+  id: string;
+  studyId: string;
+  subjectId: string;
+  /** The StudyVisit.id this instance is an occurrence of. */
+  visitId: string;
+  /** Snapshotted from StudyVisit at creation. */
+  visitName: string;
+  arm?: string;
+  status: VisitInstanceStatus;
+  scheduledDate?: string;
+  completedDate?: string;
+  createdBy?: { id: string; name: string };
+}
+
+export type RecordStatus = 'in-progress' | 'submitted' | 'signed';
+
+export interface SubmissionRecord {
+  id: string;
+  values: Record<string, unknown>;
+  status: RecordStatus;
+  submittedBy?: { id: string; name: string };
+  submittedAt?: string;
+  signedBy?: { id: string; name: string };
+  signedAt?: string;
+}
+
+export interface FormSubmission {
+  id: string;
+  studyId: string;
+  subjectId: string;
+  visitInstanceId: string;
+  formId: string;
+  /** Snapshotted from StudyForm at creation. */
+  formName: string;
+  repeatable: boolean;
+  records: SubmissionRecord[];
+}
+
 // ---- Build options (shared with the client) ----
 export interface BuildOptions {
   customInstructions?: string;
