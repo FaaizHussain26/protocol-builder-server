@@ -112,19 +112,34 @@ export async function getStudy(id: string): Promise<StudyModel> {
   return doc.toJSON() as unknown as StudyModel;
 }
 
-export async function createStudy(study: Partial<StudyModel> & Record<string, unknown>): Promise<StudyModel> {
+// The authenticated actor behind a create/update — stamped onto the document
+// so a study always shows who created/last touched it, and so Phase 4's audit
+// trail has a "who" to read.
+export interface Actor { id: string; name: string }
+
+export async function createStudy(study: Partial<StudyModel> & Record<string, unknown>, actor?: Actor): Promise<StudyModel> {
   ensureDb();
   const base = studyPayload(study);
-  const doc = await StudyDoc.create(await withEmbedding({ ...base, ...countVisitsFields(base.visits as any[], base.findings as any[]) }));
+  const doc = await StudyDoc.create(await withEmbedding({
+    ...base, ...countVisitsFields(base.visits as any[], base.findings as any[]),
+    createdBy: actor, updatedBy: actor,
+  }));
   // Learn from user-edited fields (fire-and-forget; failures only log).
   void recordFieldEdits(base as Partial<StudyModel>, String(doc._id));
   return doc.toJSON() as unknown as StudyModel;
 }
 
-export async function updateStudy(id: string, study: Partial<StudyModel> & Record<string, unknown>): Promise<StudyModel> {
+export async function updateStudy(id: string, study: Partial<StudyModel> & Record<string, unknown>, actor?: Actor): Promise<StudyModel> {
   ensureDb();
   const base = studyPayload(study);
-  const doc = await StudyDoc.findByIdAndUpdate(id, await withEmbedding({ ...base, ...countVisitsFields(base.visits as any[], base.findings as any[]) }), { new: true, overwrite: true });
+  // overwrite:true replaces the WHOLE document, so createdBy must be carried
+  // forward explicitly or it would be wiped on every save.
+  const existing = await StudyDoc.findById(id, { createdBy: 1 });
+  if (!existing) throw new HttpError(404, 'Study not found.');
+  const doc = await StudyDoc.findByIdAndUpdate(id, await withEmbedding({
+    ...base, ...countVisitsFields(base.visits as any[], base.findings as any[]),
+    createdBy: existing.get('createdBy') ?? actor, updatedBy: actor,
+  }), { new: true, overwrite: true });
   if (!doc) throw new HttpError(404, 'Study not found.');
   void recordFieldEdits(base as Partial<StudyModel>, id);
   return doc.toJSON() as unknown as StudyModel;

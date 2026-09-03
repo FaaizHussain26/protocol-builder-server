@@ -30,6 +30,10 @@ const StudySchema = new Schema(
     showFieldTypeBadge: Boolean,
     // Soft-delete: null/absent = active; a Date = in Trash (recoverable).
     deletedAt: { type: Date, default: null },
+    // Attribution — the "who" behind the current save, and who first created
+    // it. Populated from the authenticated user; feeds the audit trail later.
+    createdBy: { type: Schema.Types.Mixed },
+    updatedBy: { type: Schema.Types.Mixed },
     // Vector-ready (Phase 3, unused for now).
     embedding: { type: [Number], default: undefined },
     embeddingModel: String,

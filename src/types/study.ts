@@ -282,6 +282,9 @@ export interface StudyModel {
   findings: IntelligenceFinding[];
   /** When the eSource was first saved (ISO) — set by the server, read-only. */
   createdAt?: string;
+  /** Who created / last saved the study — set by the server, read-only. */
+  createdBy?: { id: string; name: string };
+  updatedBy?: { id: string; name: string };
   /** Applied template id and date-format preference. Phase 2. */
   templateId?: string;
   dateFormatPreference?: string;

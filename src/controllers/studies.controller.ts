@@ -1,5 +1,19 @@
 import type { Request, Response } from 'express';
 import * as studies from '../services/studies.service';
+import { getUserById } from '../services/auth.service';
+
+// req.user only carries { id, role } (the JWT payload) — the audit-friendly
+// { id, name } actor needs the current name, so this fetches it. Best-effort:
+// a lookup failure should never block a save, it just leaves attribution off.
+async function actorFrom(req: Request): Promise<{ id: string; name: string } | undefined> {
+  if (!req.user) return undefined;
+  try {
+    const u = await getUserById(req.user.id);
+    return { id: u.id, name: u.name };
+  } catch {
+    return undefined;
+  }
+}
 
 export async function list(_req: Request, res: Response): Promise<void> {
   res.json({ items: await studies.listStudies() });
@@ -10,12 +24,12 @@ export async function getOne(req: Request, res: Response): Promise<void> {
 }
 
 export async function create(req: Request, res: Response): Promise<void> {
-  const study = await studies.createStudy(req.body.study);
+  const study = await studies.createStudy(req.body.study, await actorFrom(req));
   res.status(201).json({ study });
 }
 
 export async function update(req: Request, res: Response): Promise<void> {
-  const study = await studies.updateStudy(String(req.params.id), req.body.study);
+  const study = await studies.updateStudy(String(req.params.id), req.body.study, await actorFrom(req));
   res.json({ study });
 }
 

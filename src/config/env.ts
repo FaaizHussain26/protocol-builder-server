@@ -42,6 +42,11 @@ export const env = {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean),
+  jwtSecret: process.env.JWT_SECRET || '',
+  jwtExpiresIn: process.env.JWT_EXPIRES_IN || '12h',
+  // Required to self-register once an admin already exists (the very first
+  // account in the system always becomes admin, invite code or not).
+  registrationInviteCode: process.env.REGISTRATION_INVITE_CODE || '',
 };
 
 export const azureConfigured = !!env.azure.endpoint && !!env.azure.apiKey;
@@ -49,4 +54,6 @@ export const azureConfigured = !!env.azure.endpoint && !!env.azure.apiKey;
 export function logConfigWarnings(): void {
   if (!azureConfigured) console.warn('[config] Azure OpenAI not configured — /api/build will fail until AZURE_OPENAI_* are set.');
   if (!env.mongoUri) console.warn('[config] MONGODB_URI not set — /api/studies persistence endpoints will return 503.');
+  if (!env.jwtSecret) console.warn('[config] JWT_SECRET not set — authentication will reject every request until it is.');
+  if (!env.registrationInviteCode) console.warn('[config] REGISTRATION_INVITE_CODE not set — only the very first account (auto-admin) will be able to register.');
 }
