@@ -20,20 +20,33 @@ interface StudySummary {
   createdAt: string;
   updatedAt: string;
   visitCount: number;
+  formCount: number;
   fieldCount: number;
   approvedFieldCount: number;
+  /** Fields still pending review with low AI confidence — surfaced as "flagged". */
+  flaggedFieldCount: number;
+  /** Unresolved blocker-severity intelligence findings. */
+  openBlockerCount: number;
   deletedAt?: string;
 }
 
-function countVisitsFields(visits: any[]): { visitCount: number; fieldCount: number; approvedFieldCount: number } {
-  let fieldCount = 0, approvedFieldCount = 0;
+function countVisitsFields(visits: any[], findings: any[]): {
+  visitCount: number; formCount: number; fieldCount: number; approvedFieldCount: number;
+  flaggedFieldCount: number; openBlockerCount: number;
+} {
+  let formCount = 0, fieldCount = 0, approvedFieldCount = 0, flaggedFieldCount = 0;
   for (const v of visits ?? []) {
     for (const f of v.forms ?? []) {
+      formCount += 1;
       fieldCount += (f.fields ?? []).length;
-      approvedFieldCount += (f.fields ?? []).filter((x: any) => x?.reviewStatus === 'accepted').length;
+      for (const x of f.fields ?? []) {
+        if (x?.reviewStatus === 'accepted') approvedFieldCount += 1;
+        if (x?.reviewStatus === 'pending' && x?.confidence === 'low') flaggedFieldCount += 1;
+      }
     }
   }
-  return { visitCount: (visits ?? []).length, fieldCount, approvedFieldCount };
+  const openBlockerCount = (findings ?? []).filter((x: any) => x?.severity === 'blocker' && !x?.resolved).length;
+  return { visitCount: (visits ?? []).length, formCount, fieldCount, approvedFieldCount, flaggedFieldCount, openBlockerCount };
 }
 
 // Strip persistence-only keys so we save just the domain study payload.
@@ -58,7 +71,7 @@ export async function listStudies(): Promise<StudySummary[]> {
   ensureDb();
   // Project summary fields only — never the (potentially huge) visits tree.
   // Active studies only ({deletedAt: null} also matches docs with no such field).
-  const docs = await StudyDoc.find({ deletedAt: null }, { studyTitle: 1, protocolNumber: 1, phase: 1, status: 1, visitCount: 1, fieldCount: 1, approvedFieldCount: 1, updatedAt: 1, createdAt: 1 })
+  const docs = await StudyDoc.find({ deletedAt: null }, { studyTitle: 1, protocolNumber: 1, phase: 1, status: 1, visitCount: 1, formCount: 1, fieldCount: 1, approvedFieldCount: 1, flaggedFieldCount: 1, openBlockerCount: 1, updatedAt: 1, createdAt: 1 })
     .sort({ updatedAt: -1 })
     .lean();
   return docs.map(toSummary);
@@ -67,7 +80,7 @@ export async function listStudies(): Promise<StudySummary[]> {
 // Trashed (soft-deleted) studies, most-recently-deleted first.
 export async function listTrash(): Promise<StudySummary[]> {
   ensureDb();
-  const docs = await StudyDoc.find({ deletedAt: { $ne: null } }, { studyTitle: 1, protocolNumber: 1, phase: 1, status: 1, visitCount: 1, fieldCount: 1, approvedFieldCount: 1, updatedAt: 1, createdAt: 1, deletedAt: 1 })
+  const docs = await StudyDoc.find({ deletedAt: { $ne: null } }, { studyTitle: 1, protocolNumber: 1, phase: 1, status: 1, visitCount: 1, formCount: 1, fieldCount: 1, approvedFieldCount: 1, flaggedFieldCount: 1, openBlockerCount: 1, updatedAt: 1, createdAt: 1, deletedAt: 1 })
     .sort({ deletedAt: -1 })
     .lean();
   return docs.map(toSummary);
@@ -83,8 +96,11 @@ function toSummary(d: any): StudySummary {
     updatedAt: (d.updatedAt instanceof Date ? d.updatedAt : new Date(d.updatedAt)).toISOString(),
     createdAt: (d.createdAt ? (d.createdAt instanceof Date ? d.createdAt : new Date(d.createdAt)) : (d.updatedAt instanceof Date ? d.updatedAt : new Date(d.updatedAt))).toISOString(),
     visitCount: d.visitCount ?? 0,
+    formCount: d.formCount ?? 0,
     fieldCount: d.fieldCount ?? 0,
     approvedFieldCount: d.approvedFieldCount ?? 0,
+    flaggedFieldCount: d.flaggedFieldCount ?? 0,
+    openBlockerCount: d.openBlockerCount ?? 0,
     deletedAt: d.deletedAt ? (d.deletedAt instanceof Date ? d.deletedAt : new Date(d.deletedAt)).toISOString() : undefined,
   };
 }
@@ -99,7 +115,7 @@ export async function getStudy(id: string): Promise<StudyModel> {
 export async function createStudy(study: Partial<StudyModel> & Record<string, unknown>): Promise<StudyModel> {
   ensureDb();
   const base = studyPayload(study);
-  const doc = await StudyDoc.create(await withEmbedding({ ...base, ...countVisitsFields(base.visits as any[]) }));
+  const doc = await StudyDoc.create(await withEmbedding({ ...base, ...countVisitsFields(base.visits as any[], base.findings as any[]) }));
   // Learn from user-edited fields (fire-and-forget; failures only log).
   void recordFieldEdits(base as Partial<StudyModel>, String(doc._id));
   return doc.toJSON() as unknown as StudyModel;
@@ -108,7 +124,7 @@ export async function createStudy(study: Partial<StudyModel> & Record<string, un
 export async function updateStudy(id: string, study: Partial<StudyModel> & Record<string, unknown>): Promise<StudyModel> {
   ensureDb();
   const base = studyPayload(study);
-  const doc = await StudyDoc.findByIdAndUpdate(id, await withEmbedding({ ...base, ...countVisitsFields(base.visits as any[]) }), { new: true, overwrite: true });
+  const doc = await StudyDoc.findByIdAndUpdate(id, await withEmbedding({ ...base, ...countVisitsFields(base.visits as any[], base.findings as any[]) }), { new: true, overwrite: true });
   if (!doc) throw new HttpError(404, 'Study not found.');
   void recordFieldEdits(base as Partial<StudyModel>, id);
   return doc.toJSON() as unknown as StudyModel;

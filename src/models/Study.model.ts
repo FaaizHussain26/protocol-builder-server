@@ -19,8 +19,11 @@ const StudySchema = new Schema(
     // Denormalized counts so the list endpoint never has to load the full
     // visits tree (a study can carry 1500+ fields).
     visitCount: { type: Number, default: 0 },
+    formCount: { type: Number, default: 0 },
     fieldCount: { type: Number, default: 0 },
     approvedFieldCount: { type: Number, default: 0 },
+    flaggedFieldCount: { type: Number, default: 0 },
+    openBlockerCount: { type: Number, default: 0 },
     buildOptions: { type: Schema.Types.Mixed },
     templateId: String,
     dateFormatPreference: String,
