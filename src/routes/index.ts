@@ -8,6 +8,7 @@ import { questionsRouter } from './questions.routes';
 import { studySubjectsRouter, subjectsRouter } from './subjects.routes';
 import { visitsRouter } from './visits.routes';
 import { submissionsRouter } from './submissions.routes';
+import { studyAuditRouter } from './audit.routes';
 import { requireAuth } from '../middleware/auth.middleware';
 
 export const apiRouter = Router();
@@ -20,6 +21,7 @@ apiRouter.use('/auth', authRouter);
 apiRouter.use('/build', requireAuth, buildRouter);
 apiRouter.use('/studies', requireAuth, studiesRouter);
 apiRouter.use('/studies/:studyId/subjects', requireAuth, studySubjectsRouter);
+apiRouter.use('/studies/:studyId/audit', requireAuth, studyAuditRouter);
 apiRouter.use('/templates', requireAuth, templatesRouter);
 apiRouter.use('/questions', requireAuth, questionsRouter);
 

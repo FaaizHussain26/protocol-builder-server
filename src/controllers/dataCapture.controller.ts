@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import * as dc from '../services/dataCapture.service';
 import { getUserById } from '../services/auth.service';
+import { logAudit } from '../services/auditLog.service';
 
 // req.user only carries { id, role } — fetch the current name for attribution.
 // Best-effort: a lookup failure should never block the action.
@@ -56,26 +57,41 @@ export async function getFormSubmission(req: Request, res: Response): Promise<vo
 }
 
 export async function addRecord(req: Request, res: Response): Promise<void> {
-  res.status(201).json({ submission: await dc.addRecord(String(req.params.submissionId)) });
+  const actor = await actorFrom(req);
+  const submission = await dc.addRecord(String(req.params.submissionId));
+  const newest = submission.records[submission.records.length - 1];
+  void logAudit({ studyId: String(submission.studyId), entityType: 'form-submission-record', entityId: newest.id, action: 'created', actor, summary: `Added a record to ${submission.formName}` });
+  res.status(201).json({ submission });
 }
 
 export async function deleteRecord(req: Request, res: Response): Promise<void> {
-  res.json({ submission: await dc.deleteRecord(String(req.params.submissionId), String(req.params.recordId)) });
+  const actor = await actorFrom(req);
+  const recordId = String(req.params.recordId);
+  const submission = await dc.deleteRecord(String(req.params.submissionId), recordId);
+  void logAudit({ studyId: String(submission.studyId), entityType: 'form-submission-record', entityId: recordId, action: 'removed', actor, summary: `Removed a record from ${submission.formName}` });
+  res.json({ submission });
 }
 
 export async function updateRecordValues(req: Request, res: Response): Promise<void> {
-  const { submission } = await dc.updateRecordValues(String(req.params.submissionId), String(req.params.recordId), req.body.values ?? {});
+  const actor = await actorFrom(req);
+  const recordId = String(req.params.recordId);
+  const { submission, before, after } = await dc.updateRecordValues(String(req.params.submissionId), recordId, req.body.values ?? {});
+  void logAudit({ studyId: String(submission.studyId), entityType: 'form-submission-record', entityId: recordId, action: 'updated', before, after, actor, summary: `Updated values on ${submission.formName}` });
   res.json({ submission });
 }
 
 export async function submitRecord(req: Request, res: Response): Promise<void> {
   const actor = await actorFrom(req);
   if (!actor) { res.status(401).json({ error: 'Not authenticated.' }); return; }
-  res.json({ submission: await dc.submitRecord(String(req.params.submissionId), String(req.params.recordId), actor) });
+  const submission = await dc.submitRecord(String(req.params.submissionId), String(req.params.recordId), actor);
+  void logAudit({ studyId: String(submission.studyId), entityType: 'form-submission-record', entityId: String(req.params.recordId), action: 'submitted', actor, summary: `Submitted a record on ${submission.formName}` });
+  res.json({ submission });
 }
 
 export async function signRecord(req: Request, res: Response): Promise<void> {
   const actor = await actorFrom(req);
   if (!actor) { res.status(401).json({ error: 'Not authenticated.' }); return; }
-  res.json({ submission: await dc.signRecord(String(req.params.submissionId), String(req.params.recordId), actor) });
+  const submission = await dc.signRecord(String(req.params.submissionId), String(req.params.recordId), actor);
+  void logAudit({ studyId: String(submission.studyId), entityType: 'form-submission-record', entityId: String(req.params.recordId), action: 'signed', actor, summary: `Signed a record on ${submission.formName}` });
+  res.json({ submission });
 }

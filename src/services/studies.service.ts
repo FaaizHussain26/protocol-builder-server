@@ -3,7 +3,49 @@ import { isMongoConnected, dbUnavailableMessage } from '../config/db';
 import { HttpError } from '../middleware/errorHandler';
 import { embed, studyEmbeddingText, EMBED_MODEL } from './embeddings.service';
 import { recordFieldEdits } from './editMemory.service';
+import { logAudit, type AuditActor } from './auditLog.service';
 import type { StudyModel } from '../types/study';
+
+// ---- Phase 4: audit the study-DEFINITION (build) changes an update makes ----
+// Flatten every field across every visit/form into a lookup by field id, since
+// that's the granularity the audit trail tracks (not whole-visit/form diffs).
+interface FlatField { label?: string; type?: string; required?: boolean; options?: string[]; formName?: string }
+function flattenFields(visits: any[] | undefined): Map<string, FlatField> {
+  const map = new Map<string, FlatField>();
+  for (const v of visits ?? []) {
+    for (const f of v.forms ?? []) {
+      for (const fl of f.fields ?? []) {
+        map.set(fl.id, { label: fl.label, type: fl.type, required: fl.required, options: fl.options, formName: f.name });
+      }
+    }
+  }
+  return map;
+}
+
+const TRACKED_KEYS: (keyof FlatField)[] = ['label', 'type', 'required', 'options'];
+function fieldChanged(a: FlatField, b: FlatField): boolean {
+  return TRACKED_KEYS.some((k) => JSON.stringify(a[k]) !== JSON.stringify(b[k]));
+}
+
+// Fire-and-forget: diff old vs. new field definitions and log one audit entry
+// per field that was added, removed, or changed.
+function auditStudyFieldDiff(studyId: string, before: any[] | undefined, after: any[] | undefined, actor?: AuditActor): void {
+  const beforeMap = flattenFields(before);
+  const afterMap = flattenFields(after);
+  for (const [fieldId, next] of afterMap) {
+    const prev = beforeMap.get(fieldId);
+    if (!prev) {
+      void logAudit({ studyId, entityType: 'field', entityId: fieldId, action: 'added', after: next, actor, summary: `Added field "${next.label}" to ${next.formName}` });
+    } else if (fieldChanged(prev, next)) {
+      void logAudit({ studyId, entityType: 'field', entityId: fieldId, action: 'updated', before: prev, after: next, actor, summary: `Updated field "${next.label ?? prev.label}" in ${next.formName ?? prev.formName}` });
+    }
+  }
+  for (const [fieldId, prev] of beforeMap) {
+    if (!afterMap.has(fieldId)) {
+      void logAudit({ studyId, entityType: 'field', entityId: fieldId, action: 'removed', before: prev, actor, summary: `Removed field "${prev.label}" from ${prev.formName}` });
+    }
+  }
+}
 
 function ensureDb(): void {
   if (!isMongoConnected()) {
@@ -133,8 +175,9 @@ export async function updateStudy(id: string, study: Partial<StudyModel> & Recor
   ensureDb();
   const base = studyPayload(study);
   // overwrite:true replaces the WHOLE document, so createdBy must be carried
-  // forward explicitly or it would be wiped on every save.
-  const existing = await StudyDoc.findById(id, { createdBy: 1 });
+  // forward explicitly or it would be wiped on every save. Fetch visits too —
+  // diffed against the incoming payload for the audit trail before it's gone.
+  const existing = await StudyDoc.findById(id, { createdBy: 1, visits: 1 });
   if (!existing) throw new HttpError(404, 'Study not found.');
   const doc = await StudyDoc.findByIdAndUpdate(id, await withEmbedding({
     ...base, ...countVisitsFields(base.visits as any[], base.findings as any[]),
@@ -142,6 +185,7 @@ export async function updateStudy(id: string, study: Partial<StudyModel> & Recor
   }), { new: true, overwrite: true });
   if (!doc) throw new HttpError(404, 'Study not found.');
   void recordFieldEdits(base as Partial<StudyModel>, id);
+  auditStudyFieldDiff(id, existing.get('visits') as any[], base.visits as any[], actor);
   return doc.toJSON() as unknown as StudyModel;
 }
 
