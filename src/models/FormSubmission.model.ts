@@ -15,7 +15,10 @@ const RecordSchema = new Schema(
     signedBy: { type: Schema.Types.Mixed },
     signedAt: Date,
   },
-  { _id: false },
+  // minimize:false — an empty values object is a real "nothing entered yet"
+  // state, not an absent field; without this Mongoose strips it from JSON and
+  // the client sees `values` as undefined.
+  { _id: false, minimize: false },
 );
 
 // One form, for one visit instance, for one subject. `repeatable` is
